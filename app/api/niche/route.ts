@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchYouTubeNicheData, YouTubeAPIError } from '@/lib/youtube';
+import { fetchTrendsData, TrendsAPIError } from '@/lib/trends';
 import { getSupabaseServerClient } from '@/lib/supabase-server';
 
 const CACHE_TTL_DAYS = 7;
@@ -11,12 +12,13 @@ function normalizeQuery(q: string): string {
 /**
  * GET /api/niche?q=<search term>
  *
- * Step 1-2 milestone: returns RAW YouTube data for a search term.
- * No scoring, no Trends data yet — those get layered in as separate
- * steps once this pipeline is proven solid.
+ * Returns RAW YouTube + Trends data for a search term. Still no
+ * scoring here — that stays in lib/scoring, operating on this output.
  *
- * Cache-first: checks Supabase for a non-expired lookup before
- * spending YouTube API quota.
+ * Trends and YouTube are fetched independently and a failure in
+ * either is reported without failing the whole request — a broken
+ * Trends call (see the caveat in lib/trends.ts about it being an
+ * unofficial API) shouldn't take down the YouTube data too.
  */
 export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.get('q');
@@ -42,9 +44,6 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (cacheError) {
-    // Don't fail the whole request over a cache read error — log and
-    // fall through to a live fetch. Cache is an optimization, not a
-    // dependency.
     console.error('Cache read error:', cacheError);
   }
 
@@ -53,14 +52,19 @@ export async function GET(req: NextRequest) {
       source: 'cache',
       fetchedAt: cached.fetched_at,
       data: cached.youtube_raw,
+      trends: cached.trends_raw,
     });
   }
 
-  // 2. No valid cache entry — fetch live from YouTube
-  let liveData;
-  try {
-    liveData = await fetchYouTubeNicheData(query);
-  } catch (err) {
+  // 2. No valid cache entry — fetch live from YouTube and Trends in parallel.
+  // Use allSettled, not all: a Trends failure shouldn't sink the YouTube data.
+  const [youtubeResult, trendsResult] = await Promise.allSettled([
+    fetchYouTubeNicheData(query),
+    fetchTrendsData(query),
+  ]);
+
+  if (youtubeResult.status === 'rejected') {
+    const err = youtubeResult.reason;
     if (err instanceof YouTubeAPIError) {
       return NextResponse.json(
         { error: err.message, status: err.status },
@@ -74,7 +78,22 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 3. Write to cache (best-effort — don't fail the response if this fails)
+  const liveData = youtubeResult.value;
+
+  let trendsData = null;
+  let trendsWarning: string | null = null;
+  if (trendsResult.status === 'fulfilled') {
+    trendsData = trendsResult.value;
+  } else {
+    const err = trendsResult.reason;
+    trendsWarning =
+      err instanceof TrendsAPIError
+        ? `Trends data unavailable: ${err.message}`
+        : 'Trends data unavailable due to an unexpected error.';
+    console.error('Trends fetch failed (non-fatal):', err);
+  }
+
+  // 3. Write to cache (best-effort)
   const expiresAt = new Date(
     Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
@@ -83,6 +102,7 @@ export async function GET(req: NextRequest) {
     query,
     normalized_query: normalizedQuery,
     youtube_raw: liveData,
+    trends_raw: trendsData,
     fetched_at: liveData.fetchedAt,
     expires_at: expiresAt,
   });
@@ -95,5 +115,7 @@ export async function GET(req: NextRequest) {
     source: 'live',
     fetchedAt: liveData.fetchedAt,
     data: liveData,
+    trends: trendsData,
+    ...(trendsWarning ? { trendsWarning } : {}),
   });
 }

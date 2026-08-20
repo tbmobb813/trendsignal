@@ -1,4 +1,5 @@
 import { YouTubeNicheRawData, YouTubeChannelStats } from '../youtube';
+import { TrendsRawData } from '../trends';
 import { ChannelMetrics, CompetitionScoreResult } from './types';
 
 /**
@@ -147,12 +148,19 @@ function flagGeneralists(
 
 /**
  * Main entry point: given raw niche data (and optionally, historical
- * datasets for cross-query generalist detection), compute the full
- * competition-quality picture.
+ * datasets for cross-query generalist detection, and Trends data for
+ * the demand floor), compute the full competition-quality picture.
+ *
+ * trendsData is optional deliberately — the Trends client is an
+ * unofficial API that can fail (see lib/trends.ts) and the score
+ * should still be computable without it, just less trustworthy. When
+ * absent, a note is added rather than silently treating the niche as
+ * having no demand problem.
  */
 export function computeCompetitionScore(
   data: YouTubeNicheRawData,
-  historicalDatasets: YouTubeNicheRawData[] = []
+  historicalDatasets: YouTubeNicheRawData[] = [],
+  trendsData: TrendsRawData | null = null
 ): CompetitionScoreResult {
   const notes: string[] = [];
 
@@ -196,15 +204,110 @@ export function computeCompetitionScore(
 
   const medianVideoCount = median(specialists.map((c) => c.videoCount));
 
-  // First-pass scoring formula: fewer specialist competitors relative to
-  // total search results returned = more room. This is deliberately
-  // simple and almost certainly wrong in its exact weighting — the
-  // point right now is to have SOMETHING to compare across niches and
-  // refine, not a final formula. Treat the score as directional, not
-  // authoritative.
-  const totalResultsConsidered = data.videos.length || 1;
-  const specialistDensity = specialistCompetitorCount / totalResultsConsidered;
-  const score = Math.round(Math.max(0, Math.min(100, (1 - specialistDensity) * 100)));
+  // ---- v2 scoring formula ----
+  // Fixes three confirmed failure modes from testing against 12 real queries:
+  //   1. Generalist HEADCOUNT (v1) said little — "how to invest for beginners" had
+  //      only 4 generalist channels by count but they held the overwhelming majority
+  //      of subscriber mass. Weight by subscribers, not headcount.
+  //   2. Raw channel diversity alone missed "SERP concentration" — a query dominated
+  //      by a few channels posting frequent refresh content (e.g. monthly "best GPU"
+  //      videos) looks like low competition by unique-channel-count but is actually
+  //      hard to break into because those few channels systematically own the ranking
+  //      positions. Measured here via Herfindahl-Hirschman Index on result-share.
+  //   3. The two must-pass validation cases from testing: "pottery for beginners" and
+  //      "resume tips for career changers" (both near-zero generalist contamination,
+  //      genuine specialist fields) need to score HIGH under this formula — if they
+  //      don't, the formula is still wrong. See scripts/test-scoring.ts output.
+
+  // --- Authority pressure: how large are the channels in this field, generally ---
+  const meaningfulSubCounts = meaningful
+    .map((c) => c.subscriberCount)
+    .filter((s): s is number => s !== null && s > 0);
+  const medianSubs = median(meaningfulSubCounts);
+  // log10(1,000) = 3, log10(50,000,000) ≈ 7.7 — normalize that range to 0-1
+  const medianLogSubs = medianSubs > 0 ? Math.log10(medianSubs) : 3;
+  const authorityPressure = Math.max(0, Math.min(1, (medianLogSubs - 3) / (7.7 - 3)));
+
+  // --- Concentration pressure: HHI on search-RESULT share per channel ---
+  // (not video-count on the channel overall — specifically how many of the top N
+  // search results a single channel occupies, which is what "owns the SERP" means)
+  const resultCountByChannel = new Map<string, number>();
+  for (const v of data.videos) {
+    resultCountByChannel.set(v.channelId, (resultCountByChannel.get(v.channelId) ?? 0) + 1);
+  }
+  const totalResults = data.videos.length || 1;
+  let hhi = 0;
+  for (const count of resultCountByChannel.values()) {
+    const share = count / totalResults;
+    hhi += share * share;
+  }
+  const concentrationPressure = Math.max(0, Math.min(1, hhi));
+
+  // --- Generalist authority share: subscriber MASS held by generalists, not headcount ---
+  const totalMeaningfulSubMass = meaningfulSubCounts.reduce((sum, s) => sum + s, 0);
+  const generalistSubMass = meaningful
+    .filter((c) => c.isGeneralistSuspected)
+    .map((c) => c.subscriberCount)
+    .filter((s): s is number => s !== null && s > 0)
+    .reduce((sum, s) => sum + s, 0);
+  const generalistAuthorityShare =
+    totalMeaningfulSubMass > 0 ? generalistSubMass / totalMeaningfulSubMass : 0;
+
+  if (generalistAuthorityShare > 0.6) {
+    notes.push(
+      `Generalists hold ${Math.round(generalistAuthorityShare * 100)}% of total subscriber mass among meaningful competitors — even though there may be few of them by headcount, they likely dominate ranking and algorithmic reach.`
+    );
+  }
+  if (concentrationPressure > 0.15) {
+    notes.push(
+      `Search results are concentrated among a small number of channels (HHI ${concentrationPressure.toFixed(2)}) — possibly a few channels systematically dominating this exact query (e.g. recurring refresh content), not genuinely open competition.`
+    );
+  }
+
+  const WEIGHT_AUTHORITY = 0.4;
+  const WEIGHT_CONCENTRATION = 0.3;
+  const WEIGHT_GENERALIST = 0.3;
+
+  const pressure =
+    WEIGHT_AUTHORITY * authorityPressure +
+    WEIGHT_CONCENTRATION * concentrationPressure +
+    WEIGHT_GENERALIST * generalistAuthorityShare;
+
+  const score = Math.round(Math.max(0, Math.min(100, (1 - pressure) * 100)));
+
+  // ---- Demand floor ----
+  // Fixes the confirmed gap from testing: "restoring vintage mechanical
+  // calculators" scored 91 (highest of 22 real queries) under pure
+  // competition scoring, because near-zero competition reads as pure
+  // opportunity with nothing checking whether anyone is actually
+  // searching for it. Verified against real Google Trends data: this
+  // query returns hasData:false across virtually its entire recent
+  // history — there is no meaningful search demand to speak of.
+  //
+  // This floor MULTIPLIES the competition score down when demand
+  // coverage is low, rather than averaging it in — a niche with zero
+  // demand should not be rescued by having zero competition, because
+  // "nobody is searching for this" is disqualifying on its own, not
+  // just one input among several.
+  let finalScore = score;
+  if (trendsData) {
+    const coverage = trendsData.recentDataCoverage; // 0-1
+    if (coverage < 0.2) {
+      notes.push(
+        `Google Trends shows almost no search interest for this query (${Math.round(coverage * 100)}% of recent months had any signal at all) — the competition score above may be misleadingly high, since low competition here likely reflects low demand, not open opportunity.`
+      );
+      finalScore = Math.round(score * 0.3); // heavy penalty, not zero — some legitimately tiny niches are still viable microniches
+    } else if (coverage < 0.5) {
+      notes.push(
+        `Google Trends shows inconsistent search interest for this query (${Math.round(coverage * 100)}% of recent months had signal) — treat the opportunity score with caution until demand is confirmed some other way.`
+      );
+      finalScore = Math.round(score * 0.7);
+    }
+  } else {
+    notes.push(
+      'No Trends data available for this query — the score below reflects competition structure only and has not been checked against actual search demand.'
+    );
+  }
 
   return {
     query: data.query,
@@ -214,7 +317,10 @@ export function computeCompetitionScore(
     specialistCompetitorCount,
     generalistDipInGap,
     medianVideoCount,
-    score,
+    authorityPressure,
+    concentrationPressure,
+    generalistAuthorityShare,
+    score: finalScore,
     notes,
   };
 }
