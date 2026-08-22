@@ -68,6 +68,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
+  const [timeframe, setTimeframe] = useState<'recent' | 'all'>('recent');
+  const [hoveredPoint, setHoveredPoint] = useState<{ x: number; y: number; value: number; date: string; index: number } | null>(null);
 
   const samples = [
     "budget meal prep",
@@ -85,6 +87,8 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
+    setHoveredPoint(null);
+    setTimeframe('recent');
     try {
       const res = await fetch(`/api/niche?q=${encodeURIComponent(searchQuery)}`);
       if (!res.ok) {
@@ -359,6 +363,244 @@ export default function Home() {
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* Google Trends Search Interest over time chart */}
+            {data.trends && data.trends.points.length > 0 && (
+              <div className="bg-zinc-900/35 border border-zinc-800/60 backdrop-blur-xl rounded-2xl p-6 sm:p-8 shadow-lg">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
+                  <div>
+                    <h3 className="text-zinc-400 text-xs font-bold font-mono tracking-wider uppercase block">
+                      Search Interest Over Time
+                    </h3>
+                    <span className="text-[10px] text-zinc-500 font-mono mt-1 block">
+                      Google Trends signal for &ldquo;{data.simplifiedQuery}&rdquo;
+                    </span>
+                  </div>
+                  {/* Timeframe Toggle */}
+                  <div className="flex bg-zinc-950/60 border border-zinc-800 rounded-xl p-1 shrink-0 self-start sm:self-auto">
+                    <button
+                      onClick={() => { setTimeframe('recent'); setHoveredPoint(null); }}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        timeframe === 'recent'
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      Last 24 Months
+                    </button>
+                    <button
+                      onClick={() => { setTimeframe('all'); setHoveredPoint(null); }}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        timeframe === 'all'
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      All Time ({data.trends.points.length} mo)
+                    </button>
+                  </div>
+                </div>
+
+                {/* SVG Chart Container */}
+                {(() => {
+                  const pointsToPlot = timeframe === 'recent' ? data.trends.points.slice(-24) : data.trends.points;
+                  if (pointsToPlot.length === 0) {
+                    return (
+                      <div className="h-40 flex items-center justify-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-xl">
+                        No historical points to plot.
+                      </div>
+                    );
+                  }
+
+                  const svgWidth = 800;
+                  const svgHeight = 200;
+                  const padLeft = 40;
+                  const padRight = 20;
+                  const padTop = 20;
+                  const padBottom = 30;
+
+                  const chartWidth = svgWidth - padLeft - padRight;
+                  const chartHeight = svgHeight - padTop - padBottom;
+
+                  const getX = (index: number) => {
+                    if (pointsToPlot.length <= 1) return padLeft;
+                    return padLeft + (index / (pointsToPlot.length - 1)) * chartWidth;
+                  };
+
+                  const getY = (val: number) => {
+                    return padTop + chartHeight - (val / 100) * chartHeight;
+                  };
+
+                  // Build line path
+                  let pathD = "";
+                  pointsToPlot.forEach((p, i) => {
+                    const x = getX(i);
+                    const y = getY(p.value);
+                    if (i === 0) {
+                      pathD += `M ${x} ${y}`;
+                    } else {
+                      pathD += ` L ${x} ${y}`;
+                    }
+                  });
+
+                  // Build area path
+                  let areaD = pathD;
+                  if (pointsToPlot.length > 0) {
+                    const firstX = getX(0);
+                    const lastX = getX(pointsToPlot.length - 1);
+                    const bottomY = padTop + chartHeight;
+                    areaD += ` L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
+                  }
+
+                  return (
+                    <div className="relative">
+                      {/* Gradient Definitions */}
+                      <svg className="w-full h-auto" viewBox={`0 0 ${svgWidth} ${svgHeight}`}>
+                        <defs>
+                          {/* Stroke gradient */}
+                          <linearGradient id="chartStroke" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#3b82f6" />
+                            <stop offset="50%" stopColor="#4f46e5" />
+                            <stop offset="100%" stopColor="#6366f1" />
+                          </linearGradient>
+                          {/* Area gradient */}
+                          <linearGradient id="chartArea" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.15" />
+                            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                          </linearGradient>
+                        </defs>
+
+                        {/* Y-axis helper gridlines (0, 25, 50, 75, 100) */}
+                        {[0, 25, 50, 75, 100].map((v) => {
+                          const y = getY(v);
+                          return (
+                            <g key={v} className="opacity-[0.06] dark:opacity-[0.08]">
+                              <line
+                                x1={padLeft}
+                                y1={y}
+                                x2={svgWidth - padRight}
+                                y2={y}
+                                stroke="currentColor"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={padLeft - 8}
+                                y={y + 4}
+                                textAnchor="end"
+                                className="fill-current text-[10px] font-mono font-bold"
+                              >
+                                {v}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {/* X-axis labels (start, mid, end) */}
+                        {pointsToPlot.length > 1 && (
+                          <g className="opacity-40 text-[9px] font-mono font-medium fill-zinc-400">
+                            {/* Start label */}
+                            <text x={getX(0)} y={svgHeight - 10} textAnchor="start">
+                              {pointsToPlot[0].formattedTime}
+                            </text>
+                            {/* Mid label */}
+                            <text x={getX(Math.floor(pointsToPlot.length / 2))} y={svgHeight - 10} textAnchor="middle">
+                              {pointsToPlot[Math.floor(pointsToPlot.length / 2)].formattedTime}
+                            </text>
+                            {/* End label */}
+                            <text x={getX(pointsToPlot.length - 1)} y={svgHeight - 10} textAnchor="end">
+                              {pointsToPlot[pointsToPlot.length - 1].formattedTime}
+                            </text>
+                          </g>
+                        )}
+
+                        {/* Render Area Fill */}
+                        <path d={areaD} fill="url(#chartArea)" pointerEvents="none" />
+
+                        {/* Render Line Stroke */}
+                        <path
+                          d={pathD}
+                          fill="none"
+                          stroke="url(#chartStroke)"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          pointerEvents="none"
+                        />
+
+                        {/* Interactive vertical hover stripes */}
+                        {pointsToPlot.map((p, i) => {
+                          const x = getX(i);
+                          const colWidth = chartWidth / pointsToPlot.length;
+                          return (
+                            <rect
+                              key={i}
+                              x={x - colWidth / 2}
+                              y={padTop}
+                              width={colWidth}
+                              height={chartHeight}
+                              fill="transparent"
+                              className="cursor-crosshair"
+                              onMouseEnter={() => {
+                                setHoveredPoint({
+                                  x,
+                                  y: getY(p.value),
+                                  value: p.value,
+                                  date: p.formattedTime,
+                                  index: i
+                                });
+                              }}
+                              onMouseLeave={() => setHoveredPoint(null)}
+                            />
+                          );
+                        })}
+
+                        {/* Hover elements (only when hovering) */}
+                        {hoveredPoint && (
+                          <>
+                            {/* Vertical tracker line */}
+                            <line
+                              x1={hoveredPoint.x}
+                              y1={padTop}
+                              x2={hoveredPoint.x}
+                              y2={padTop + chartHeight}
+                              stroke="#6366f1"
+                              strokeWidth="1.2"
+                              strokeDasharray="4 4"
+                              pointerEvents="none"
+                              className="opacity-60"
+                            />
+                            {/* Guide circle on line */}
+                            <circle
+                              cx={hoveredPoint.x}
+                              cy={hoveredPoint.y}
+                              r="5"
+                              fill="#4f46e5"
+                              stroke="#fff"
+                              strokeWidth="2"
+                              pointerEvents="none"
+                            />
+                          </>
+                        )}
+                      </svg>
+
+                      {/* Tooltip Overlay */}
+                      {hoveredPoint && (
+                        <div
+                          className="absolute bg-zinc-950/95 border border-zinc-800 rounded-lg px-3 py-2 shadow-xl pointer-events-none -translate-x-1/2 -translate-y-full -mt-3.5 transition-all duration-75 text-[11px] leading-tight"
+                          style={{
+                            left: `${(hoveredPoint.x / svgWidth) * 100}%`,
+                            top: `${(hoveredPoint.y / svgHeight) * 100}%`
+                          }}
+                        >
+                          <span className="text-zinc-500 font-bold block mb-1">{hoveredPoint.date}</span>
+                          <span className="text-white font-extrabold text-sm block">Interest: {hoveredPoint.value}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
