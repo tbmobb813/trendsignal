@@ -1,12 +1,20 @@
 /**
- * Run with: ANTHROPIC_API_KEY=sk-... npx tsx scripts/test-llm-simplifier.ts
+ * Run with either or both keys set:
+ *   ANTHROPIC_API_KEY=sk-ant-... npx tsx scripts/test-llm-simplifier.ts
+ *   OPENROUTER_API_KEY=sk-or-... npx tsx scripts/test-llm-simplifier.ts
+ *   ANTHROPIC_API_KEY=... OPENROUTER_API_KEY=... npx tsx scripts/test-llm-simplifier.ts
+ *
+ * With both set, Anthropic is tried first by default (see
+ * lib/query-simplifier-llm.ts getProviderOrder) — the console output
+ * will show which provider actually served each result, so you can
+ * confirm the fallback chain is working, not just that SOME result
+ * came back.
  *
  * This exists because the LLM simplifier could NOT be tested during
- * development — no API key was available in that environment. Run
- * this before trusting lib/query-simplifier-llm.ts in the live
- * pipeline. Compare the output against the "expected" column by eye —
- * there's no automated pass/fail here because "is this a good search
- * phrase" is a judgment call, not a strict equality check.
+ * development — no working API key was available in that
+ * environment. Compare output against "expected" by eye — there's no
+ * automated pass/fail since "is this a good search phrase" is a
+ * judgment call, not strict equality.
  */
 import { simplifyQueryWithLLM } from '../lib/query-simplifier-llm';
 
@@ -20,8 +28,8 @@ const testCases: { query: string; expectedRoughly: string }[] = [
 ];
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('ANTHROPIC_API_KEY is not set. Run with: ANTHROPIC_API_KEY=sk-... npx tsx scripts/test-llm-simplifier.ts');
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
+    console.error('Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set. Set at least one.');
     process.exit(1);
   }
 
