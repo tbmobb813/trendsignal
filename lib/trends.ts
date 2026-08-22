@@ -55,7 +55,14 @@ export async function fetchTrendsData(query: string): Promise<TrendsRawData> {
     throw new TrendsAPIError(`Google Trends request failed for "${query}"`, err);
   }
 
-  let parsed: any;
+  interface TrendsTimelinePoint {
+    time: string;
+    formattedTime: string;
+    value: number[];
+    hasData: boolean[];
+  }
+
+  let parsed: { default?: { timelineData?: TrendsTimelinePoint[] } } | null = null;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
@@ -67,7 +74,7 @@ export async function fetchTrendsData(query: string): Promise<TrendsRawData> {
     throw new TrendsAPIError(`Google Trends response missing timelineData for "${query}"`);
   }
 
-  const points: TrendsDataPoint[] = timelineData.map((p: any) => ({
+  const points: TrendsDataPoint[] = timelineData.map((p) => ({
     time: p.time,
     formattedTime: p.formattedTime,
     value: Array.isArray(p.value) ? p.value[0] ?? 0 : 0,
