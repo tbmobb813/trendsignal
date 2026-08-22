@@ -88,7 +88,17 @@ async function searchVideos(
 
   const data = await res.json();
 
-  return (data.items ?? []).map((item: any) => ({
+  interface YouTubeSearchItem {
+    id: { videoId: string };
+    snippet: {
+      title: string;
+      channelId: string;
+      channelTitle: string;
+      publishedAt: string;
+    };
+  }
+
+  return (data.items ?? []).map((item: YouTubeSearchItem) => ({
     videoId: item.id.videoId,
     title: item.snippet.title,
     channelId: item.snippet.channelId,

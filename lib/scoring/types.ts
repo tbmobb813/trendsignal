@@ -1,5 +1,3 @@
-import { YouTubeNicheRawData, YouTubeChannelStats } from '../youtube';
-
 /** Derived per-channel metrics computed from raw stats. */
 export interface ChannelMetrics {
   channelId: string;

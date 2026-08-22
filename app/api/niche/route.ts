@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchYouTubeNicheData, YouTubeAPIError } from '@/lib/youtube';
-import { fetchTrendsData, TrendsAPIError } from '@/lib/trends';
+import { fetchYouTubeNicheData, YouTubeAPIError, YouTubeNicheRawData } from '@/lib/youtube';
+import { fetchTrendsData, TrendsAPIError, TrendsRawData } from '@/lib/trends';
 import { getSupabaseServerClient } from '@/lib/supabase-server';
+import { simplifyQueryWithLLM } from '@/lib/query-simplifier-llm';
+import { computeCompetitionScore } from '@/lib/scoring/competition';
+import { isRateLimited } from '@/lib/rate-limiter';
 
 const CACHE_TTL_DAYS = 7;
 
@@ -12,15 +15,20 @@ function normalizeQuery(q: string): string {
 /**
  * GET /api/niche?q=<search term>
  *
- * Returns RAW YouTube + Trends data for a search term. Still no
- * scoring here — that stays in lib/scoring, operating on this output.
+ * Returns analyzed YouTube + Trends data for a search term, including
+ * dynamic opportunity scoring, channel statistics, and insights.
  *
- * Trends and YouTube are fetched independently and a failure in
- * either is reported without failing the whole request — a broken
- * Trends call (see the caveat in lib/trends.ts about it being an
- * unofficial API) shouldn't take down the YouTube data too.
+ * Trends and YouTube are fetched independently.
  */
 export async function GET(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
+  if (isRateLimited(ip)) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please wait a minute before scanning again.' },
+      { status: 429 }
+    );
+  }
+
   const query = req.nextUrl.searchParams.get('q');
 
   if (!query || query.trim().length < 2) {
@@ -48,19 +56,40 @@ export async function GET(req: NextRequest) {
   }
 
   if (cached) {
+    // Fetch historical datasets (excluding current query) to enable generalist detection
+    const { data: history } = await supabase
+      .from('niche_lookups')
+      .select('youtube_raw')
+      .neq('normalized_query', normalizedQuery)
+      .limit(50);
+
+    const historicalDatasets = history
+      ? history.map((row) => row.youtube_raw as YouTubeNicheRawData).filter(Boolean)
+      : [];
+
+    const trendsRaw = cached.trends_raw as TrendsRawData | null;
+    const scoreResult = computeCompetitionScore(
+      cached.youtube_raw as YouTubeNicheRawData,
+      historicalDatasets,
+      trendsRaw
+    );
+
     return NextResponse.json({
       source: 'cache',
       fetchedAt: cached.fetched_at,
-      data: cached.youtube_raw,
-      trends: cached.trends_raw,
+      simplifiedQuery: trendsRaw ? trendsRaw.query : normalizedQuery,
+      scoreResult,
+      videos: (cached.youtube_raw as YouTubeNicheRawData).videos || [],
+      trends: trendsRaw,
     });
   }
 
   // 2. No valid cache entry — fetch live from YouTube and Trends in parallel.
-  // Use allSettled, not all: a Trends failure shouldn't sink the YouTube data.
+  // Use allSettled: a Trends failure shouldn't sink the YouTube data.
+  const simplifiedQuery = await simplifyQueryWithLLM(query);
   const [youtubeResult, trendsResult] = await Promise.allSettled([
     fetchYouTubeNicheData(query),
-    fetchTrendsData(query),
+    fetchTrendsData(simplifiedQuery),
   ]);
 
   if (youtubeResult.status === 'rejected') {
@@ -93,6 +122,23 @@ export async function GET(req: NextRequest) {
     console.error('Trends fetch failed (non-fatal):', err);
   }
 
+  // Fetch historical datasets for generalist detection
+  const { data: history } = await supabase
+    .from('niche_lookups')
+    .select('youtube_raw')
+    .neq('normalized_query', normalizedQuery)
+    .limit(50);
+
+  const historicalDatasets = history
+    ? history.map((row) => row.youtube_raw as YouTubeNicheRawData).filter(Boolean)
+    : [];
+
+  const scoreResult = computeCompetitionScore(
+    liveData,
+    historicalDatasets,
+    trendsData
+  );
+
   // 3. Write to cache (best-effort)
   const expiresAt = new Date(
     Date.now() + CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
@@ -114,7 +160,9 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     source: 'live',
     fetchedAt: liveData.fetchedAt,
-    data: liveData,
+    simplifiedQuery,
+    scoreResult,
+    videos: liveData.videos || [],
     trends: trendsData,
     ...(trendsWarning ? { trendsWarning } : {}),
   });
