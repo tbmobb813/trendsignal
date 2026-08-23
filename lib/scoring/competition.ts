@@ -1,6 +1,7 @@
 import { YouTubeNicheRawData, YouTubeChannelStats } from '../youtube';
 import { TrendsRawData } from '../trends';
 import { ChannelMetrics, CompetitionScoreResult } from './types';
+import { getMonetizationBenchmark } from './monetization';
 
 /**
  * Thresholds and multipliers below are FIRST-PASS heuristics, not tuned
@@ -56,10 +57,7 @@ function median(nums: number[]): number {
 
 /**
  * Flags channels whose views-per-video is a statistical outlier relative
- * to OTHER channels in the same niche result set — not an absolute
- * threshold, since "high" varies hugely by niche scale (see Spizee vs.
- * NurseZee in the night-shift-nurses fixture: both anomalous, at
- * completely different absolute scales).
+ * to OTHER channels in the same niche result set.
  */
 function flagViralOutliers(
   channels: Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'>[]
@@ -79,17 +77,7 @@ function flagViralOutliers(
 }
 
 /**
- * Counts how many distinct past query datasets each channel has
- * appeared in. Pass in whatever historical raw datasets you have
- * (from the cache table, or in-memory during testing). A channel
- * appearing across multiple UNRELATED niches is the strongest signal
- * of "generalist dipping in" — stronger than a raw subscriber
- * threshold, because it's behavioral, not size-based.
- *
- * Cold start: with only one dataset (or none), this always returns 0
- * for every channel — that's expected and correct. Fall back to
- * computeGeneralistFlags's subscriber-based heuristic until you've
- * accumulated a few queries' worth of history.
+ * Counts how many distinct past query datasets each channel has appeared in.
  */
 export function computeCrossQueryAppearances(
   targetChannelIds: string[],
@@ -111,10 +99,7 @@ export function computeCrossQueryAppearances(
 }
 
 /**
- * Decides which channels count as "generalist-suspected" for this
- * query, using cross-query appearance history when available and
- * falling back to a subscriber-count heuristic when it isn't
- * (cold start — see computeCrossQueryAppearances docs).
+ * Decides which channels count as "generalist-suspected" for this query.
  */
 function flagGeneralists(
   channels: Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'>[],
@@ -124,18 +109,7 @@ function flagGeneralists(
 
   for (const c of channels) {
     const appearances = crossQueryAppearances.get(c.channelId) ?? 0;
-
-    // Behavioral signal: recurs across enough unrelated past queries.
     const behavioralFlag = appearances >= GENERALIST_APPEARANCE_THRESHOLD;
-
-    // Size-based signal: runs independently, NOT gated on appearances === 0.
-    // A channel can be a single-appearance generalist on its first sighting
-    // in your dataset (e.g. an 8.6M-sub fitness channel showing up once for
-    // "morning routine") — waiting for zero history before applying this
-    // check misses exactly that case. This is still a rough proxy (false
-    // positives on large legitimate specialists, false negatives on
-    // mid-size generalists) — refine once you have enough query history
-    // that the behavioral signal can carry more of the weight.
     const sizeFlag = c.subscriberCount !== null && c.subscriberCount >= GENERALIST_SUBSCRIBER_FALLBACK;
 
     if (behavioralFlag || sizeFlag) {
@@ -147,15 +121,8 @@ function flagGeneralists(
 }
 
 /**
- * Main entry point: given raw niche data (and optionally, historical
- * datasets for cross-query generalist detection, and Trends data for
- * the demand floor), compute the full competition-quality picture.
- *
- * trendsData is optional deliberately — the Trends client is an
- * unofficial API that can fail (see lib/trends.ts) and the score
- * should still be computable without it, just less trustworthy. When
- * absent, a note is added rather than silently treating the niche as
- * having no demand problem.
+ * Main entry point: given raw niche data (and optionally historical datasets and Trends data),
+ * compute the full opportunity & competition picture.
  */
 export function computeCompetitionScore(
   data: YouTubeNicheRawData,
@@ -187,13 +154,10 @@ export function computeCompetitionScore(
   }));
 
   const rawCompetitorCount = channels.length;
-
   const meaningful = channels.filter((c) => !c.isThin);
   const meaningfulCompetitorCount = meaningful.length;
-
   const specialists = meaningful.filter((c) => !c.isGeneralistSuspected);
   const specialistCompetitorCount = specialists.length;
-
   const generalistDipInGap = meaningfulCompetitorCount - specialistCompetitorCount;
 
   if (generalistDipInGap >= 3) {
@@ -204,33 +168,15 @@ export function computeCompetitionScore(
 
   const medianVideoCount = median(specialists.map((c) => c.videoCount));
 
-  // ---- v2 scoring formula ----
-  // Fixes three confirmed failure modes from testing against 12 real queries:
-  //   1. Generalist HEADCOUNT (v1) said little — "how to invest for beginners" had
-  //      only 4 generalist channels by count but they held the overwhelming majority
-  //      of subscriber mass. Weight by subscribers, not headcount.
-  //   2. Raw channel diversity alone missed "SERP concentration" — a query dominated
-  //      by a few channels posting frequent refresh content (e.g. monthly "best GPU"
-  //      videos) looks like low competition by unique-channel-count but is actually
-  //      hard to break into because those few channels systematically own the ranking
-  //      positions. Measured here via Herfindahl-Hirschman Index on result-share.
-  //   3. The two must-pass validation cases from testing: "pottery for beginners" and
-  //      "resume tips for career changers" (both near-zero generalist contamination,
-  //      genuine specialist fields) need to score HIGH under this formula — if they
-  //      don't, the formula is still wrong. See scripts/test-scoring.ts output.
-
-  // --- Authority pressure: how large are the channels in this field, generally ---
+  // --- Authority pressure ---
   const meaningfulSubCounts = meaningful
     .map((c) => c.subscriberCount)
     .filter((s): s is number => s !== null && s > 0);
   const medianSubs = median(meaningfulSubCounts);
-  // log10(1,000) = 3, log10(50,000,000) ≈ 7.7 — normalize that range to 0-1
   const medianLogSubs = medianSubs > 0 ? Math.log10(medianSubs) : 3;
   const authorityPressure = Math.max(0, Math.min(1, (medianLogSubs - 3) / (7.7 - 3)));
 
-  // --- Concentration pressure: HHI on search-RESULT share per channel ---
-  // (not video-count on the channel overall — specifically how many of the top N
-  // search results a single channel occupies, which is what "owns the SERP" means)
+  // --- Concentration pressure ---
   const resultCountByChannel = new Map<string, number>();
   for (const v of data.videos) {
     resultCountByChannel.set(v.channelId, (resultCountByChannel.get(v.channelId) ?? 0) + 1);
@@ -243,7 +189,7 @@ export function computeCompetitionScore(
   }
   const concentrationPressure = Math.max(0, Math.min(1, hhi));
 
-  // --- Generalist authority share: subscriber MASS held by generalists, not headcount ---
+  // --- Generalist authority share ---
   const totalMeaningfulSubMass = meaningfulSubCounts.reduce((sum, s) => sum + s, 0);
   const generalistSubMass = meaningful
     .filter((c) => c.isGeneralistSuspected)
@@ -264,31 +210,24 @@ export function computeCompetitionScore(
     );
   }
 
-  const WEIGHT_AUTHORITY = 0.4;
-  const WEIGHT_CONCENTRATION = 0.3;
-  const WEIGHT_GENERALIST = 0.3;
+  // --- Monetization pressure (Inverse of Monetization Benchmark Score) ---
+  const monetizationRes = getMonetizationBenchmark(data.query);
+  const monetizationPressure = 1 - monetizationRes.benchmark.monetizationScore / 100;
+
+  const WEIGHT_AUTHORITY = 0.35;
+  const WEIGHT_CONCENTRATION = 0.25;
+  const WEIGHT_GENERALIST = 0.25;
+  const WEIGHT_MONETIZATION = 0.15;
 
   const pressure =
     WEIGHT_AUTHORITY * authorityPressure +
     WEIGHT_CONCENTRATION * concentrationPressure +
-    WEIGHT_GENERALIST * generalistAuthorityShare;
+    WEIGHT_GENERALIST * generalistAuthorityShare +
+    WEIGHT_MONETIZATION * monetizationPressure;
 
   const score = Math.round(Math.max(0, Math.min(100, (1 - pressure) * 100)));
 
-  // ---- Demand floor ----
-  // Fixes the confirmed gap from testing: "restoring vintage mechanical
-  // calculators" scored 91 (highest of 22 real queries) under pure
-  // competition scoring, because near-zero competition reads as pure
-  // opportunity with nothing checking whether anyone is actually
-  // searching for it. Verified against real Google Trends data: this
-  // query returns hasData:false across virtually its entire recent
-  // history — there is no meaningful search demand to speak of.
-  //
-  // This floor MULTIPLIES the competition score down when demand
-  // coverage is low, rather than averaging it in — a niche with zero
-  // demand should not be rescued by having zero competition, because
-  // "nobody is searching for this" is disqualifying on its own, not
-  // just one input among several.
+  // ---- Demand floor multiplier ----
   let finalScore = score;
   if (trendsData) {
     const coverage = trendsData.recentDataCoverage; // 0-1
@@ -296,7 +235,7 @@ export function computeCompetitionScore(
       notes.push(
         `Google Trends shows almost no search interest for this query (${Math.round(coverage * 100)}% of recent months had any signal at all) — the competition score above may be misleadingly high, since low competition here likely reflects low demand, not open opportunity.`
       );
-      finalScore = Math.round(score * 0.3); // heavy penalty, not zero — some legitimately tiny niches are still viable microniches
+      finalScore = Math.round(score * 0.3);
     } else if (coverage < 0.5) {
       notes.push(
         `Google Trends shows inconsistent search interest for this query (${Math.round(coverage * 100)}% of recent months had signal) — treat the opportunity score with caution until demand is confirmed some other way.`
