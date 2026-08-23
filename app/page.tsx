@@ -1,6 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { ExecutionQuestionnaire } from "@/components/ExecutionQuestionnaire";
+import { MatrixQuadrant } from "@/components/MatrixQuadrant";
+import { SubNicheBreakdown } from "@/components/SubNicheBreakdown";
+import { MonetizationCard } from "@/components/MonetizationCard";
+import { calculateExecutionFitScore, ExecutionAnswers } from "@/lib/scoring/execution";
+import { RelatedQueryItem } from "@/lib/trends";
 
 interface ChannelMetrics {
   channelId: string;
@@ -51,6 +57,8 @@ interface TrendsRawData {
   fetchedAt: string;
   points: TrendsDataPoint[];
   recentDataCoverage: number;
+  relatedTop?: RelatedQueryItem[];
+  relatedRising?: RelatedQueryItem[];
 }
 
 interface SearchResponse {
@@ -68,8 +76,14 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SearchResponse | null>(null);
-  const [timeframe, setTimeframe] = useState<'recent' | 'all'>('recent');
+  const [timeframe, setTimeframe] = useState<'3m' | '6m' | '12m' | '24m' | 'all'>('12m');
   const [hoveredPoint, setHoveredPoint] = useState<{ x: number; y: number; value: number; date: string; index: number } | null>(null);
+  const [executionAnswers, setExecutionAnswers] = useState<ExecutionAnswers>({});
+
+  const executionResult = calculateExecutionFitScore(
+    executionAnswers,
+    data ? data.scoreResult.score : 0
+  );
 
   const samples = [
     "budget meal prep",
@@ -88,7 +102,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setHoveredPoint(null);
-    setTimeframe('recent');
+    setTimeframe('12m');
     try {
       const res = await fetch(`/api/niche?q=${encodeURIComponent(searchQuery)}`);
       if (!res.ok) {
@@ -379,33 +393,41 @@ export default function Home() {
                     </span>
                   </div>
                   {/* Timeframe Toggle */}
-                  <div className="flex bg-zinc-950/60 border border-zinc-800 rounded-xl p-1 shrink-0 self-start sm:self-auto">
-                    <button
-                      onClick={() => { setTimeframe('recent'); setHoveredPoint(null); }}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                        timeframe === 'recent'
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      Last 24 Months
-                    </button>
-                    <button
-                      onClick={() => { setTimeframe('all'); setHoveredPoint(null); }}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                        timeframe === 'all'
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      All Time ({data.trends.points.length} mo)
-                    </button>
+                  <div className="flex flex-wrap bg-zinc-950/60 border border-zinc-800 rounded-xl p-1 shrink-0 self-start sm:self-auto gap-0.5">
+                    {[
+                      { id: '3m', label: '3 Mo' },
+                      { id: '6m', label: '6 Mo' },
+                      { id: '12m', label: '12 Mo' },
+                      { id: '24m', label: '24 Mo' },
+                      { id: 'all', label: `All (${data.trends.points.length}m)` },
+                    ].map((tf) => (
+                      <button
+                        key={tf.id}
+                        onClick={() => {
+                          setTimeframe(tf.id as '3m' | '6m' | '12m' | '24m' | 'all');
+                          setHoveredPoint(null);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                          timeframe === tf.id
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
                 {/* SVG Chart Container */}
                 {(() => {
-                  const pointsToPlot = timeframe === 'recent' ? data.trends.points.slice(-24) : data.trends.points;
+                  const pointsToPlot = (() => {
+                    if (timeframe === '3m') return data.trends.points.slice(-3);
+                    if (timeframe === '6m') return data.trends.points.slice(-6);
+                    if (timeframe === '12m') return data.trends.points.slice(-12);
+                    if (timeframe === '24m') return data.trends.points.slice(-24);
+                    return data.trends.points;
+                  })();
                   if (pointsToPlot.length === 0) {
                     return (
                       <div className="h-40 flex items-center justify-center text-zinc-500 text-xs border border-dashed border-zinc-800 rounded-xl">
@@ -604,12 +626,35 @@ export default function Home() {
               </div>
             )}
 
+            {/* Sub-Niche Decomposition & Related Angles */}
+            {data.trends && (
+              <SubNicheBreakdown
+                relatedTop={data.trends.relatedTop}
+                relatedRising={data.trends.relatedRising}
+                onSubNicheSelect={(selectedQuery) => handleSearch(selectedQuery)}
+              />
+            )}
+
+            {/* Creator Execution Fit & 2x2 Strategic Matrix Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <ExecutionQuestionnaire
+                answers={executionAnswers}
+                onAnswerSelect={(qId, optId) => {
+                  setExecutionAnswers((prev) => ({ ...prev, [qId]: optId }));
+                }}
+              />
+              <MatrixQuadrant
+                nicheOpportunityScore={data.scoreResult.score}
+                executionResult={executionResult}
+              />
+            </div>
+
             {/* Metrics Breakdown (Pressures Grid) */}
             <div className="bg-zinc-900/35 border border-zinc-800/60 backdrop-blur-xl rounded-2xl p-8 shadow-lg">
               <h3 className="text-zinc-400 text-xs font-bold font-mono tracking-wider uppercase mb-6">
-                Metric Pressures Breakdown
+                Metric Pressures Breakdown & Monetization
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
                 {/* 1. Demand Coverage */}
                 <div className="bg-zinc-950/50 p-5 rounded-xl border border-zinc-800/40 flex flex-col justify-between">
                   <div>
@@ -701,6 +746,9 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                {/* 5. Monetization Potential & RPM */}
+                <MonetizationCard query={data.scoreResult.query} />
               </div>
             </div>
 

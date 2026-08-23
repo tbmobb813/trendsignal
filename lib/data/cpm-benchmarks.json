@@ -1,0 +1,74 @@
+[
+  {
+    "id": "finance",
+    "category": "Personal Finance, Real Estate & Crypto",
+    "cpmTier": "HIGH",
+    "rpmRange": "$18.00 – $45.00",
+    "monetizationScore": 100,
+    "affiliatePotential": "High (Stock brokerages, crypto exchanges, credit card referrals, financial software).",
+    "keywords": ["finance", "investing", "money", "crypto", "bitcoin", "real estate", "mortgage", "tax", "saas", "trading", "stocks", "passive income", "credit", "wealth"]
+  },
+  {
+    "id": "business",
+    "category": "Business, Marketing & Entrepreneurship",
+    "cpmTier": "HIGH",
+    "rpmRange": "$12.00 – $28.00",
+    "monetizationScore": 90,
+    "affiliatePotential": "High (B2B SaaS, CRM tools, email software, website hosts, courses).",
+    "keywords": ["business", "marketing", "ecommerce", "dropshipping", "agency", "freelance", "productivity", "entrepreneur", "sales", "b2b", "startup"]
+  },
+  {
+    "id": "tech",
+    "category": "Technology, Software & Coding",
+    "cpmTier": "HIGH",
+    "rpmRange": "$10.00 – $22.00",
+    "monetizationScore": 85,
+    "affiliatePotential": "High (VPNs, cloud hosting, dev tools, laptops, electronics, software SaaS).",
+    "keywords": ["tech", "coding", "programming", "software", "developer", "ai", "python", "javascript", "laptop", "gadget", "cybersecurity", "review", "hardware"]
+  },
+  {
+    "id": "health",
+    "category": "Health, Fitness & Wellness",
+    "cpmTier": "MEDIUM",
+    "rpmRange": "$6.00 – $14.00",
+    "monetizationScore": 70,
+    "affiliatePotential": "High (Supplements, workout gear, meal delivery kits, fitness apps).",
+    "keywords": ["fitness", "workout", "gym", "diet", "weight loss", "keto", "nutrition", "yoga", "supplements", "mental health", "sleep", "bodybuilding"]
+  },
+  {
+    "id": "home_diy",
+    "category": "Home Improvement, Crafting & Woodworking",
+    "cpmTier": "MEDIUM",
+    "rpmRange": "$5.00 – $12.00",
+    "monetizationScore": 65,
+    "affiliatePotential": "Moderate-High (Power tools, craft supplies, woodworking blueprints, Etsy sales).",
+    "keywords": ["woodworking", "pottery", "diy", "renovation", "gardening", "crafts", "restoration", "tools", "sharpening", "carpentry", "sewing", "mechanical"]
+  },
+  {
+    "id": "cooking_food",
+    "category": "Cooking, Recipes & Culinary",
+    "cpmTier": "MEDIUM",
+    "rpmRange": "$4.00 – $9.50",
+    "monetizationScore": 60,
+    "affiliatePotential": "Moderate (Kitchenware links, meal kit sponsorships, cookbooks).",
+    "keywords": ["cooking", "recipe", "food", "baking", "meal prep", "chef", "kitchen", "bbq", "grilling", "culinary"]
+  },
+  {
+    "id": "gaming",
+    "category": "Gaming & Esports",
+    "cpmTier": "LOW",
+    "rpmRange": "$2.00 – $5.00",
+    "monetizationScore": 35,
+    "affiliatePotential": "Low-Moderate (Gaming peripherals, chairs, energy drinks, sponsor placements).",
+    "keywords": ["gaming", "gameplay", "minecraft", "roblox", "fortnite", "esports", "streamer", "ps5", "xbox", "nintendo", "walkthrough"]
+  },
+  {
+    "id": "vlogs_entertainment",
+    "category": "General Vlogs & Entertainment",
+    "cpmTier": "LOW",
+    "rpmRange": "$1.50 – $4.00",
+    "monetizationScore": 30,
+    "affiliatePotential": "Low (Merchandise sales, Patreon, brand sponsorships).",
+    "keywords": ["vlog", "prank", "challenge", "comedy", "reaction", "shorts", "storytime", "daily life"]
+  }
+]

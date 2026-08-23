@@ -133,6 +133,8 @@ describe('YouTube Niche Competition Scorer', () => {
         fetchedAt: '2026-08-22T00:00:00Z',
         points: [],
         recentDataCoverage: 0.9, // 90% coverage
+        relatedTop: [],
+        relatedRising: [],
       };
 
       const highTrendsResult = computeCompetitionScore(fixtureCalculators, [], highTrendsData);
@@ -144,6 +146,8 @@ describe('YouTube Niche Competition Scorer', () => {
         fetchedAt: '2026-08-22T00:00:00Z',
         points: [],
         recentDataCoverage: 0.1, // 10% coverage (below 20% floor)
+        relatedTop: [],
+        relatedRising: [],
       };
 
       const lowTrendsResult = computeCompetitionScore(fixtureCalculators, [], lowTrendsData);
