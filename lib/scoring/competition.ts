@@ -303,6 +303,40 @@ export function computeCompetitionScore(
     );
   }
 
+  // ---- Pressure weights ----
+  // KNOWN ASYMMETRY (documented, not a bug):
+  //
+  // Authority (35%) + Generalist share (25%) together outweigh
+  // Concentration (25%) by 2.4:1. This means the formula treats
+  // "a few giant channels with disproportionate subscriber reach"
+  // as harder competition than "many mid-size channels owning most
+  // of the actual ranking slots" — even when the latter looks more
+  // locked-up on the SERP itself.
+  //
+  // Confirmed with synthetic scenarios (see
+  // scripts/concentration-vs-authority-scenarios.ts):
+  //   Scenario A — 5 specialists, 80% slot occupancy → score 78
+  //   Scenario B — 2 giants, 24% slot occupancy     → score 56
+  //   Gap: 22 points
+  //
+  // Why this is kept deliberately:
+  // The formula answers "how hard is it for a NEW, SMALL, FOCUSED
+  // channel to break in?" — not "how concentrated are the SERPs
+  // today?" From a new entrant's perspective, Scenario A is a
+  // beat-them-on-the-same-terms fight (out-produce, differentiate,
+  // find a sub-angle), while Scenario B is structurally rigged by
+  // platform mechanics (subscriber-driven algorithmic push, browse
+  // and recommendation reach that bypasses search ranking entirely).
+  // The current weights capture that distinction.
+  //
+  // Reweighting toward concentration (e.g. 30/30/25/15) would make
+  // the formula better at measuring "how monopolized are the SERPs"
+  // but potentially worse at measuring "can I actually compete here."
+  // Either model is defensible; this one is chosen, not accidental.
+  //
+  // Same epistemic status as all hand-set constants in this file:
+  // reasoned but unvalidated against real outcome data. If outcome
+  // data ever shows the asymmetry misleads users, revisit here first.
   const WEIGHT_AUTHORITY = 0.35;
   const WEIGHT_CONCENTRATION = 0.25;
   const WEIGHT_GENERALIST = 0.25;
