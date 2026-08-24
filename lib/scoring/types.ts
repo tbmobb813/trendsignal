@@ -39,10 +39,14 @@ export interface CompetitionScoreResult {
    */
   authorityPressure: number;
   /**
-   * 0-1 (Herfindahl-Hirschman Index on search-result share per channel). Higher =
-   * a small number of channels own a large share of the actual ranking positions —
-   * the "monthly GPU update video" pattern, where a few channels systematically
-   * dominate the SERP through repeat/frequent presence, independent of their size.
+   * 0-1. Min-max rescaled from the raw Herfindahl-Hirschman Index on
+   * search-result share per channel (raw HHI is compressed into a tiny
+   * band in practice — see CONCENTRATION_MIN/MAX in competition.ts —
+   * so this is NOT the raw HHI value itself). Higher = a small number
+   * of channels own a large share of the actual ranking positions —
+   * the "monthly GPU update video" pattern, where a few channels
+   * systematically dominate the SERP through repeat/frequent presence,
+   * independent of their size.
    */
   concentrationPressure: number;
   /**

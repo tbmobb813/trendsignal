@@ -56,14 +56,18 @@ describe('Concentration pressure — thin-channel filtering fix', () => {
 
     // Correct (filtered) behavior: only the 3 meaningful channels count,
     // each holding a 1/3 share of the filtered result set.
-    // HHI = 3 * (1/3)^2 = 1/3 ≈ 0.333
-    expect(result.concentrationPressure).toBeCloseTo(1 / 3, 5);
+    // Raw HHI = 3 * (1/3)^2 = 1/3 ≈ 0.333. `concentrationPressure` is
+    // then min-max rescaled against CONCENTRATION_MIN/MAX = 0.02/0.40
+    // (see competition.ts) before being exposed here — NOT the raw HHI:
+    // (1/3 - 0.02) / (0.40 - 0.02) ≈ 0.8246.
+    expect(result.concentrationPressure).toBeCloseTo((1 / 3 - 0.02) / (0.4 - 0.02), 5);
 
     // Guards specifically against regressing to the old buggy behavior,
     // which counted all 10 channels (including the 7 thin ones) and
-    // would have produced HHI = 10 * (1/10)^2 = 0.1 — a meaningfully
-    // different (and confirmed-wrong-direction) value.
-    expect(result.concentrationPressure).not.toBeCloseTo(0.1, 2);
+    // would have produced raw HHI = 10 * (1/10)^2 = 0.1 — rescaled,
+    // (0.1 - 0.02) / (0.40 - 0.02) ≈ 0.2105 — a meaningfully different
+    // (and confirmed-wrong-direction) value from the correct ~0.8246.
+    expect(result.concentrationPressure).not.toBeCloseTo((0.1 - 0.02) / (0.4 - 0.02), 2);
   });
 
   it('does not crash and adds an explanatory note when every channel in the result set is thin', () => {
