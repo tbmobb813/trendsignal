@@ -22,7 +22,7 @@ function normalizeQuery(q: string): string {
  */
 export async function GET(req: NextRequest) {
   const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-  if (isRateLimited(ip)) {
+  if (await isRateLimited(ip)) {
     return NextResponse.json(
       { error: 'Too many requests. Please wait a minute before scanning again.' },
       { status: 429 }
@@ -40,6 +40,21 @@ export async function GET(req: NextRequest) {
 
   const normalizedQuery = normalizeQuery(query);
   const supabase = getSupabaseServerClient();
+
+  // Extract user session from authorization token if present
+  let userId: string | null = null;
+  const authHeader = req.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    try {
+      const { data: { user } } = await supabase.auth.getUser(token);
+      if (user) {
+        userId = user.id;
+      }
+    } catch (err) {
+      console.warn('Failed to verify token:', err);
+    }
+  }
 
   // 1. Check cache first
   const { data: cached, error: cacheError } = await supabase
@@ -151,6 +166,7 @@ export async function GET(req: NextRequest) {
     trends_raw: trendsData,
     fetched_at: liveData.fetchedAt,
     expires_at: expiresAt,
+    created_by: userId,
   });
 
   if (insertError) {

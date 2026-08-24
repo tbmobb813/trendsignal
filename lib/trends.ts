@@ -18,6 +18,16 @@ export interface RelatedQueryItem {
   type: 'top' | 'rising';
 }
 
+export type LifecycleStageType = 'EARLY_RISING' | 'PEAK_HYPE' | 'MATURE_PLATEAU' | 'DECLINING';
+
+export interface TrendLifecycleInfo {
+  stage: LifecycleStageType;
+  label: string;
+  badge: string;
+  color: 'emerald' | 'amber' | 'blue' | 'rose';
+  description: string;
+}
+
 export interface TrendsRawData {
   query: string;
   fetchedAt: string;
@@ -25,6 +35,7 @@ export interface TrendsRawData {
   recentDataCoverage: number;
   relatedTop: RelatedQueryItem[];
   relatedRising: RelatedQueryItem[];
+  lifecycle: TrendLifecycleInfo;
 }
 
 class TrendsAPIError extends Error {
@@ -32,6 +43,75 @@ class TrendsAPIError extends Error {
     super(message);
     this.name = 'TrendsAPIError';
   }
+}
+
+/**
+ * Calculates Trend Lifecycle Stage from time-series points slope.
+ */
+export function calculateTrendLifecycle(points: TrendsDataPoint[]): TrendLifecycleInfo {
+  if (points.length < 6) {
+    return {
+      stage: 'MATURE_PLATEAU',
+      label: 'Mature Plateau',
+      badge: '⚖️ Stable Evergreen Demand',
+      color: 'blue',
+      description: 'Consistent, stable search volume. A reliable evergreen category with predictable interest.',
+    };
+  }
+
+  const recent6 = points.slice(-6);
+  const firstHalf = recent6.slice(0, 3);
+  const secondHalf = recent6.slice(3);
+
+  const firstHalfAvg = firstHalf.reduce((sum, p) => sum + p.value, 0) / firstHalf.length;
+  const secondHalfAvg = secondHalf.reduce((sum, p) => sum + p.value, 0) / secondHalf.length;
+
+  let growthRate = 0;
+  if (firstHalfAvg === 0) {
+    growthRate = secondHalfAvg > 0 ? 1 : 0;
+  } else {
+    growthRate = (secondHalfAvg - firstHalfAvg) / firstHalfAvg;
+  }
+
+  const latestValue = points[points.length - 1]?.value ?? 0;
+
+  if (growthRate >= 0.25) {
+    return {
+      stage: 'EARLY_RISING',
+      label: 'Early Rising Trend',
+      badge: `🚀 Early Rising (+${Math.round(growthRate * 100)}% 6mo)`,
+      color: 'emerald',
+      description: 'Accelerating search interest over trailing 6 months. Strong early-mover advantage for new channels.',
+    };
+  }
+
+  if (latestValue >= 75 && growthRate >= -0.1) {
+    return {
+      stage: 'PEAK_HYPE',
+      label: 'Peak Hype Interest',
+      badge: `🔥 Peak Hype (${latestValue}/100)`,
+      color: 'amber',
+      description: 'Search interest is near historical peak. Demand is high, but competition for top rankings is intense.',
+    };
+  }
+
+  if (growthRate <= -0.2) {
+    return {
+      stage: 'DECLINING',
+      label: 'Declining Search Demand',
+      badge: `📉 Declining (${Math.round(growthRate * 100)}% 6mo)`,
+      color: 'rose',
+      description: 'Search volume is trending downward over the trailing 6 months. High risk of diminishing long-term returns.',
+    };
+  }
+
+  return {
+    stage: 'MATURE_PLATEAU',
+    label: 'Mature Plateau',
+    badge: '⚖️ Stable Evergreen Demand',
+    color: 'blue',
+    description: 'Consistent, stable search volume. A reliable evergreen category with predictable audience interest.',
+  };
 }
 
 /**
@@ -51,7 +131,6 @@ function getPrimaryNounRoot(q: string): string {
     .filter((w) => w.length > 2 && !stopWords.has(w));
 
   if (words.length === 0) return q;
-  // Return the longest core word (typically the primary topic noun e.g. 'pottery', 'sharpening')
   const sorted = [...words].sort((a, b) => b.length - a.length);
   return sorted[0];
 }
@@ -67,7 +146,6 @@ function parseRelatedQueriesResponse(raw: string): { top: RelatedQueryItem[]; ri
     const parsed = JSON.parse(raw);
     const rankedLists = parsed?.default?.rankedList || [];
 
-    // Top queries list (index 0)
     if (Array.isArray(rankedLists[0]?.rankedKeyword)) {
       rankedLists[0].rankedKeyword.slice(0, 8).forEach((item: { query?: string; value?: number | string }) => {
         if (item.query && item.query.trim()) {
@@ -80,7 +158,6 @@ function parseRelatedQueriesResponse(raw: string): { top: RelatedQueryItem[]; ri
       });
     }
 
-    // Rising queries list (index 1)
     if (Array.isArray(rankedLists[1]?.rankedKeyword)) {
       rankedLists[1].rankedKeyword.slice(0, 8).forEach((item: { query?: string; formattedValue?: string; value?: number | string }) => {
         if (item.query && item.query.trim()) {
@@ -172,6 +249,8 @@ export async function fetchTrendsData(query: string): Promise<TrendsRawData> {
     }
   }
 
+  const lifecycle = calculateTrendLifecycle(points);
+
   return {
     query,
     fetchedAt: new Date().toISOString(),
@@ -179,6 +258,7 @@ export async function fetchTrendsData(query: string): Promise<TrendsRawData> {
     recentDataCoverage,
     relatedTop,
     relatedRising,
+    lifecycle,
   };
 }
 

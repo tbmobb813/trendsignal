@@ -120,6 +120,55 @@ function flagGeneralists(
   return flagged;
 }
 
+interface CalibrationRange {
+  minLogSubs: number;
+  maxLogSubs: number;
+}
+
+function calculateCalibrationRange(historicalDatasets: YouTubeNicheRawData[]): CalibrationRange {
+  const DEFAULT_MIN = 3.0; // 1,000 subscribers
+  const DEFAULT_MAX = 7.7; // 50,000,000 subscribers
+
+  if (!historicalDatasets || historicalDatasets.length < 5) {
+    return { minLogSubs: DEFAULT_MIN, maxLogSubs: DEFAULT_MAX };
+  }
+
+  const historicalMedianLogs: number[] = [];
+
+  for (const dataset of historicalDatasets) {
+    const meaningful = (dataset.channels || [])
+      .filter((c) => {
+        const isThin = c.videoCount < 10 || (c.subscriberCount !== null && c.subscriberCount < 1000);
+        return !isThin;
+      });
+
+    const subCounts = meaningful
+      .map((c) => c.subscriberCount)
+      .filter((s): s is number => s !== null && s > 0);
+
+    const medianSubs = median(subCounts);
+    if (medianSubs > 0) {
+      historicalMedianLogs.push(Math.log10(medianSubs));
+    }
+  }
+
+  if (historicalMedianLogs.length < 5) {
+    return { minLogSubs: DEFAULT_MIN, maxLogSubs: DEFAULT_MAX };
+  }
+
+  const sum = historicalMedianLogs.reduce((acc, val) => acc + val, 0);
+  const avg = sum / historicalMedianLogs.length;
+
+  const sqDiffSum = historicalMedianLogs.reduce((acc, val) => acc + Math.pow(val - avg, 2), 0);
+  const stdDev = Math.sqrt(sqDiffSum / historicalMedianLogs.length);
+
+  // We set min log sub and max log sub to average +- 2 std devs (with safety floor and ceiling bounds)
+  const minLogSubs = Math.max(DEFAULT_MIN, avg - 2 * stdDev);
+  const maxLogSubs = Math.min(8.0, avg + 2 * stdDev);
+
+  return { minLogSubs, maxLogSubs };
+}
+
 /**
  * Main entry point: given raw niche data (and optionally historical datasets and Trends data),
  * compute the full opportunity & competition picture.
@@ -174,7 +223,15 @@ export function computeCompetitionScore(
     .filter((s): s is number => s !== null && s > 0);
   const medianSubs = median(meaningfulSubCounts);
   const medianLogSubs = medianSubs > 0 ? Math.log10(medianSubs) : 3;
-  const authorityPressure = Math.max(0, Math.min(1, (medianLogSubs - 3) / (7.7 - 3)));
+  const calibrationRange = calculateCalibrationRange(historicalDatasets);
+  const authorityPressure = Math.max(
+    0,
+    Math.min(
+      1,
+      (medianLogSubs - calibrationRange.minLogSubs) /
+        (calibrationRange.maxLogSubs - calibrationRange.minLogSubs || 1)
+    )
+  );
 
   // --- Concentration pressure ---
   const resultCountByChannel = new Map<string, number>();
