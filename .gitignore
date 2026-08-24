@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# stray compiled JS left behind by an accidental `tsc` emit — these
+# shadow the real .ts source for extensionless imports (Node/vitest
+# module resolution prefers .js), silently running stale code against
+# the current source. See git history around 2026-08-24 for the incident.
+lib/**/*.js
+scripts/**/*.js
+!lib/**/*.config.js

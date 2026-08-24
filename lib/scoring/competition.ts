@@ -14,6 +14,86 @@ const VIRAL_OUTLIER_MULTIPLIER = 5;
 const GENERALIST_APPEARANCE_THRESHOLD = 2;
 const GENERALIST_SUBSCRIBER_FALLBACK = 500_000;
 
+/**
+ * Authority-pressure decomposition constants. See
+ * docs/authority-concentration-findings.md for the full investigation
+ * (synthetic scenarios + all 22 real test-data fixtures) that led here.
+ *
+ * Problem: a plain median over ALL meaningful channels was composition-
+ * fragile (diluted by however many small filler channels happened to be
+ * in the result set) AND, once fixed to be specialist-only, still
+ * conflated two different questions in one number: "how big is a
+ * typical specialist competitor" vs "is there a single standout
+ * specialist dominating the niche." No blended median (plain, top-N,
+ * mass-weighted, or capped) could answer both without a counter-example
+ * — see Sections 3-9 of the findings doc for four rejected/superseded
+ * attempts.
+ *
+ * Fix: split into two pieces of evidence. SPECIALIST_SIZE_OUTLIER_MULTIPLIER
+ * (same value and rationale as VIRAL_OUTLIER_MULTIPLIER above, just
+ * applied to subscriber size instead of views-per-video) flags standout
+ * channels and excludes them from the "typical size" median, so it
+ * stays robust to a lone dominant channel. Their combined subscriber-
+ * mass share is then folded back in via DOMINANCE_BUMP, inside
+ * authorityPressure's existing weight budget — deliberately NOT a new
+ * top-level weight, to avoid the aggregate-score inflation confirmed in
+ * Prototype 6 (a new weight slot diluted authority's effective share
+ * from ~41% to ~29% whenever monetization defaults, independent of
+ * whether the decomposition logic itself was sound).
+ *
+ * MIN_SAMPLE_FOR_OUTLIER_DETECTION guards against small specialist
+ * pools (e.g. n=4) where a median-based outlier threshold is
+ * statistically unreliable — confirmed on how-to-invest-for-beginners.json,
+ * where no channel crossed a 5x-median bar at n=4 despite an obvious
+ * size gradient among the 4 specialists.
+ *
+ * DOMINANCE_BUMP = 0.2 is a deliberate, conservative first-pass choice,
+ * not a tuned value: 0.3 and 0.4 were also tested and rejected for
+ * moving too close to the swing sizes already rejected in Prototype 4/6
+ * (-9/-12 vs the already-rejected -7/-14). No real outcome data exists
+ * yet to validate any of these three values — revisit if/when usage
+ * outcome tracking exists (see project decision log, 2026-08-24).
+ */
+const SPECIALIST_SIZE_OUTLIER_MULTIPLIER = 5;
+const MIN_SAMPLE_FOR_OUTLIER_DETECTION = 6;
+const DOMINANCE_BUMP = 0.2;
+
+/**
+ * Concentration-pressure rescale. See docs/authority-concentration-findings.md
+ * Sections 13-14 for the full investigation.
+ *
+ * Problem: raw HHI, clamped directly to [0,1], is compressed into a tiny
+ * band in practice — surveyed across all 22 real test-data fixtures,
+ * concentrationPressure ranged only 0.045-0.190 (mean 0.076), vs
+ * authorityPressure's 0.30-0.48 (mean 0.41) and generalistAuthorityShare's
+ * mean of 0.82. Concentration was structurally incapable of moving a
+ * score much regardless of its weight — a reweighting attempt (tested:
+ * 30/30/25/15, 25/35/25/15, 28/32/22/18, and their average) confirmed
+ * this: every single one of the 22 real fixtures got MORE lenient under
+ * every scheme tested, with zero exceptions — a systematic bias, not a
+ * fix, because shifting weight from an always-larger component
+ * (authority) to an always-smaller one (concentration) just softens
+ * everything, independent of whether a given niche actually has a
+ * concentration problem.
+ *
+ * Fix: min-max rescale raw HHI against its observed range before
+ * applying the (unchanged) 25% weight — same technique already used for
+ * authorityPressure (log-scale + calibration range), just applied here.
+ * CONCENTRATION_MIN/MAX = 0.02/0.40 is a deliberately conservative
+ * first-pass choice: tighter ranges (0.04/0.20, 0.03/0.30, 0.03/0.25)
+ * were also tested and produced up to 3-4x larger per-fixture swings
+ * (worst case -19 vs this range's -6) for the same underlying data.
+ * Chosen for the smallest real-world impact that still fixes the
+ * directional bug (confirmed: 0 of 22 real fixtures move the wrong way
+ * under this range, same as every range tested) and still meaningfully
+ * separates synthetic Scenario B from C (SERP-concentrated-and-reach-
+ * dominated vs. reach-dominated-only) — gap widens from a broken 2
+ * points to 15. No real outcome data exists yet to validate the exact
+ * min/max values — revisit if/when usage outcome tracking exists.
+ */
+const CONCENTRATION_MIN = 0.02;
+const CONCENTRATION_MAX = 0.40;
+
 export function computeChannelMetrics(
   channel: YouTubeChannelStats
 ): Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'> {
@@ -222,10 +302,48 @@ export function computeCompetitionScore(
   const meaningfulSubCounts = meaningful
     .map((c) => c.subscriberCount)
     .filter((s): s is number => s !== null && s > 0);
-  const medianSubs = median(meaningfulSubCounts);
-  const medianLogSubs = medianSubs > 0 ? Math.log10(medianSubs) : 3;
+
+  // FIX: previously the median was computed over ALL meaningful channels,
+  // which conflated two different questions in one number — see the
+  // SPECIALIST_SIZE_OUTLIER_MULTIPLIER/DOMINANCE_BUMP doc comment above.
+  // Basis is specialist-only (generalist dominance is already fully
+  // captured by generalistAuthorityShare below — including generalists
+  // here double-counted that signal, confirmed on
+  // how-to-invest-for-beginners.json). Falls back to all meaningful
+  // channels if every meaningful channel happens to be generalist-flagged.
+  const specialistSubCounts = specialists
+    .map((c) => c.subscriberCount)
+    .filter((s): s is number => s !== null && s > 0);
+  const authorityBasis = specialistSubCounts.length > 0 ? specialistSubCounts : meaningfulSubCounts;
+
+  let robustMedianSubs: number;
+  let dominanceShare = 0;
+  if (authorityBasis.length < MIN_SAMPLE_FOR_OUTLIER_DETECTION) {
+    // Sample too small for a median-based outlier threshold to be
+    // reliable (confirmed unreliable at n=4) — use the plain median,
+    // no dominance adjustment.
+    robustMedianSubs = median(authorityBasis);
+  } else {
+    const baseMedian = median(authorityBasis);
+    const outlierThreshold = baseMedian * SPECIALIST_SIZE_OUTLIER_MULTIPLIER;
+    const outliers = baseMedian > 0 ? authorityBasis.filter((s) => s > outlierThreshold) : [];
+    const nonOutliers = authorityBasis.filter((s) => !(baseMedian > 0 && s > outlierThreshold));
+    robustMedianSubs = median(nonOutliers.length > 0 ? nonOutliers : authorityBasis);
+
+    const totalBasisMass = authorityBasis.reduce((sum, s) => sum + s, 0);
+    const outlierMass = outliers.reduce((sum, s) => sum + s, 0);
+    dominanceShare = totalBasisMass > 0 ? outlierMass / totalBasisMass : 0;
+
+    if (dominanceShare > 0.3) {
+      notes.push(
+        `${outliers.length} specialist channel(s) hold ${Math.round(dominanceShare * 100)}% of the specialist field's subscriber mass — a standout niche leader, distinct from cross-topic generalist dominance, factored into authority pressure.`
+      );
+    }
+  }
+
+  const medianLogSubs = robustMedianSubs > 0 ? Math.log10(robustMedianSubs) : 3;
   const calibrationRange = calculateCalibrationRange(historicalDatasets);
-  const authorityPressure = Math.max(
+  const baseAuthorityPressure = Math.max(
     0,
     Math.min(
       1,
@@ -233,6 +351,7 @@ export function computeCompetitionScore(
         (calibrationRange.maxLogSubs - calibrationRange.minLogSubs || 1)
     )
   );
+  const authorityPressure = Math.max(0, Math.min(1, baseAuthorityPressure + DOMINANCE_BUMP * dominanceShare));
 
   // --- Concentration pressure ---
   // FIX: previously computed on ALL raw video results regardless of
@@ -259,7 +378,10 @@ export function computeCompetitionScore(
     const share = count / totalResults;
     hhi += share * share;
   }
-  const concentrationPressure = Math.max(0, Math.min(1, hhi));
+  // Rescaled against CONCENTRATION_MIN/MAX (see doc comment above) —
+  // raw HHI alone is compressed too tightly near 0 to be a meaningful
+  // scoring input at any weight.
+  const concentrationPressure = Math.max(0, Math.min(1, (hhi - CONCENTRATION_MIN) / (CONCENTRATION_MAX - CONCENTRATION_MIN)));
 
   if (filteredVideoCount === 0 && data.videos.length > 0) {
     notes.push(
@@ -282,9 +404,13 @@ export function computeCompetitionScore(
       `Generalists hold ${Math.round(generalistAuthorityShare * 100)}% of total subscriber mass among meaningful competitors — even though there may be few of them by headcount, they likely dominate ranking and algorithmic reach.`
     );
   }
-  if (concentrationPressure > 0.15) {
+  // NOTE: uses the raw HHI (`hhi`), not the rescaled `concentrationPressure`
+  // used for scoring — this note describes the actual real-world SERP
+  // structure, not the internal scoring transform, and the 0.15 threshold
+  // was calibrated against real fixtures' raw HHI range (0.045-0.19).
+  if (hhi > 0.15) {
     notes.push(
-      `Search results are concentrated among a small number of channels (HHI ${concentrationPressure.toFixed(2)}) — possibly a few channels systematically dominating this exact query (e.g. recurring refresh content), not genuinely open competition.`
+      `Search results are concentrated among a small number of channels (HHI ${hhi.toFixed(2)}) — possibly a few channels systematically dominating this exact query (e.g. recurring refresh content), not genuinely open competition.`
     );
   }
 

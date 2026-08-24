@@ -174,4 +174,83 @@ describe('YouTube Niche Competition Scorer', () => {
       expect(result.score).toBe(normalScore); // unpenalized despite 0% coverage
     });
   });
+
+  /**
+   * Regression anchors for the two real-fixture "shapes" identified during
+   * the authority/concentration weighting investigation
+   * (docs/authority-concentration-findings.md). Values below reflect the
+   * specialist-only + outlier-excluded + DOMINANCE_BUMP=0.2 implementation
+   * (Section 11/12 of that doc) — these are NOT claims that the formula is
+   * now "correct," just that these two shapes behave deliberately, not by
+   * accident. If DOMINANCE_BUMP or the outlier multiplier are ever
+   * re-tuned with real outcome data, update these expectations as part of
+   * that same change.
+   */
+  describe('authority-pressure regression anchors (see docs/authority-concentration-findings.md)', () => {
+    it('SHAPE: single dominant specialist, zero generalists — restoring-vintage-mechanical-calculators.json', () => {
+      const fixture = loadFixture('restoring-vintage-mechanical-calculators.json');
+      const result = computeCompetitionScore(fixture, []);
+
+      // Composition: 13 meaningful channels, ALL specialists (no channel
+      // crosses the generalist behavioral or size threshold) — one of
+      // them (CuriousMarc, ~243k subs) holds the majority of the field's
+      // specialist subscriber mass. This is the exact shape that exposed
+      // authority pressure's composition-fragility (Section 3) and later
+      // its single-dominant-specialist sensitivity (Section 8).
+      const meaningful = result.channels.filter((c) => !c.isThin);
+      const generalists = meaningful.filter((c) => c.isGeneralistSuspected);
+      expect(meaningful.length).toBe(13);
+      expect(generalists.length).toBe(0);
+
+      const subCounts = meaningful.map((c) => c.subscriberCount ?? 0);
+      const totalMass = subCounts.reduce((sum, s) => sum + s, 0);
+      const topChannel = meaningful.reduce((a, b) => ((a.subscriberCount ?? 0) > (b.subscriberCount ?? 0) ? a : b));
+      expect(topChannel.title).toBe('CuriousMarc');
+      expect((topChannel.subscriberCount ?? 0) / totalMass).toBeGreaterThan(0.55); // ~59% at capture time
+
+      // CuriousMarc is excluded from the "typical size" median (he's a
+      // >5x-median outlier among 13 specialists) but his dominance is
+      // folded back in via DOMINANCE_BUMP — softer than the old plain
+      // median's 90 (which ignored him) and softer than the rejected
+      // full-mass-weighted 76 (which overreacted to him). Score is 80,
+      // not the 84 from the authority-pressure fix alone — the
+      // concentration-pressure rescale (Section 13/14) also applies
+      // here since this niche's raw HHI (~0.12) is meaningfully above
+      // the real-fixture median (~0.066), correctly reading as somewhat
+      // concentrated once rescaled.
+      expect(result.generalistAuthorityShare).toBe(0);
+      expect(result.authorityPressure).toBeCloseTo(0.296, 2);
+      expect(result.score).toBe(80);
+    });
+
+    it('SHAPE: generalist-dominated field, thin specialist tail — how-to-invest-for-beginners.json', () => {
+      const fixture = loadFixture('how-to-invest-for-beginners.json');
+      const result = computeCompetitionScore(fixture, []);
+
+      // Composition: 13 of 17 meaningful channels are size-flagged
+      // generalists (Mark Tilbury, Ali Abdaal, etc. — all >=500k subs),
+      // only 4 are real finance specialists. This is the flagship case
+      // generalistAuthorityShare was built for, and the case that
+      // exposed authority/generalist redundancy (Section 4) plus
+      // small-sample outlier-detection unreliability at n=4 (Section 10/11).
+      const meaningful = result.channels.filter((c) => !c.isThin);
+      const generalists = meaningful.filter((c) => c.isGeneralistSuspected);
+      const specialists = meaningful.filter((c) => !c.isGeneralistSuspected);
+      expect(meaningful.length).toBe(17);
+      expect(generalists.length).toBe(13);
+      expect(specialists.length).toBe(4);
+
+      // Specialist-only median (95,450 — the 4 specialists, generalists
+      // excluded so their dominance isn't double-counted against
+      // generalistAuthorityShare below). n=4 is below
+      // MIN_SAMPLE_FOR_OUTLIER_DETECTION (6), so no dominance adjustment
+      // is applied here — this residual softening vs. the old plain
+      // full-field median (50) is an intentionally open, unresolved gap
+      // (small-sample authority definition — plain vs. mass-weighted
+      // median — Section 11), not something this change claims to fix.
+      expect(result.generalistAuthorityShare).toBeGreaterThan(0.95);
+      expect(result.authorityPressure).toBeCloseTo(0.421, 2);
+      expect(result.score).toBe(56);
+    });
+  });
 });
