@@ -156,5 +156,22 @@ describe('YouTube Niche Competition Scorer', () => {
       expect(lowTrendsResult.score).toBe(Math.round(unpenalizedScore * 0.3)); // 0.3x multiplier penalty applied
       expect(lowTrendsResult.notes.some((note) => note.includes('almost no search interest'))).toBe(true);
     });
+
+    it('does not apply demand floor penalty when trends fetch is a suspected failure', () => {
+      const suspectedFailureData: TrendsRawData = {
+        query: 'test',
+        fetchedAt: '2026-08-22T00:00:00Z',
+        points: [],
+        recentDataCoverage: 0.0,
+        relatedTop: [],
+        relatedRising: [],
+        lifecycle: calculateTrendLifecycle([]),
+        suspectedFailure: true,
+      };
+
+      const result = computeCompetitionScore(fixtureCalculators, [], suspectedFailureData);
+      const normalScore = computeCompetitionScore(fixtureCalculators, []).score;
+      expect(result.score).toBe(normalScore); // unpenalized despite 0% coverage
+    });
   });
 });
