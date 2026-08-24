@@ -30,4 +30,9 @@ describe('getMonetizationBenchmark', () => {
     expect(res.benchmark.cpmTier).toBe('MEDIUM');
     expect(res.benchmark.monetizationScore).toBe(55);
   });
+
+  it('does NOT match "how to make money on youtube" to finance (regression test)', () => {
+  const res = getMonetizationBenchmark('how to make money on youtube');
+  expect(res.benchmark.id).not.toBe('finance');
+});
 });
