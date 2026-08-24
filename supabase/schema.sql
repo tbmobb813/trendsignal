@@ -121,3 +121,39 @@ begin
   return true;
 end;
 $$;
+
+-- score_events: lightweight USAGE/ENGAGEMENT logging, deliberately NOT
+-- outcome tracking. Captures which niches get searched and which
+-- scores get acted on (synthesis requested — the strongest "user
+-- engaged with this score" signal available pre-launch), as cheap
+-- groundwork for the day there's enough real usage to build actual
+-- outcome validation on top of (see
+-- docs/authority-concentration-findings.md Section 15 for why every
+-- scoring constant set during the 2026-08-24 investigation is an
+-- unvalidated first-pass guess pending real data). This table does NOT
+-- attempt to answer "did this niche succeed" — that requires a much
+-- larger, slower effort and isn't attempted here.
+create table if not exists score_events (
+  id uuid primary key default gen_random_uuid(),
+  event_type text not null check (event_type in ('niche_search', 'synthesis_requested')),
+  query text not null,
+  normalized_query text not null,
+  opportunity_score int,
+  execution_score int,
+  quadrant text,
+  source text, -- 'cache' | 'live' -- niche_search events only, null otherwise
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists score_events_normalized_query_idx
+  on score_events (normalized_query);
+
+create index if not exists score_events_event_type_idx
+  on score_events (event_type);
+
+-- Written only by the server-side service-role client (see
+-- lib/event-logger.ts), which bypasses RLS regardless. RLS is enabled
+-- with zero policies so anon/authenticated clients have no access at
+-- all -- this is an internal log, not user-facing data.
+alter table score_events enable row level security;

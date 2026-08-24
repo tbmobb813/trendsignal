@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchExecutiveSynthesis, SynthesisInput } from '@/lib/synthesis-llm';
 import { isRateLimited } from '@/lib/rate-limiter';
+import { logScoreEvent } from '@/lib/event-logger';
 
 /**
  * POST /api/synthesis
@@ -51,6 +52,18 @@ export async function POST(req: NextRequest) {
     const input = resultValidation.data;
 
     const result = await fetchExecutiveSynthesis(input);
+
+    // Strongest "user engaged with this score" signal available
+    // pre-launch — see lib/event-logger.ts.
+    await logScoreEvent({
+      eventType: 'synthesis_requested',
+      query: input.query,
+      normalizedQuery: input.query.trim().toLowerCase().replace(/\s+/g, ' '),
+      opportunityScore: input.opportunityScore,
+      executionScore: input.executionScore,
+      quadrant: input.quadrant,
+    });
+
     return NextResponse.json(result);
   } catch (err: unknown) {
     console.error('Executive synthesis API error:', err);

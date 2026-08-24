@@ -5,6 +5,7 @@ import { getSupabaseServerClient } from '@/lib/supabase-server';
 import { simplifyQueryWithLLM } from '@/lib/query-simplifier-llm';
 import { computeCompetitionScore } from '@/lib/scoring/competition';
 import { isRateLimited } from '@/lib/rate-limiter';
+import { logScoreEvent } from '@/lib/event-logger';
 
 const CACHE_TTL_DAYS = 7;
 
@@ -102,6 +103,15 @@ export async function GET(req: NextRequest) {
       trendsRaw
     );
 
+    await logScoreEvent({
+      eventType: 'niche_search',
+      query,
+      normalizedQuery: normalizedQuery,
+      opportunityScore: scoreResult.score,
+      source: 'cache',
+      userId,
+    });
+
     return NextResponse.json({
       source: 'cache',
       fetchedAt: cached.fetched_at,
@@ -187,6 +197,15 @@ export async function GET(req: NextRequest) {
   if (insertError) {
     console.error('Cache write error:', insertError);
   }
+
+  await logScoreEvent({
+    eventType: 'niche_search',
+    query,
+    normalizedQuery,
+    opportunityScore: scoreResult.score,
+    source: 'live',
+    userId,
+  });
 
   return NextResponse.json({
     source: 'live',

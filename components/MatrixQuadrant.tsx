@@ -12,7 +12,18 @@ export function MatrixQuadrant({
   nicheOpportunityScore,
   executionResult,
 }: MatrixQuadrantProps) {
-  const { quadrant, quadrantTitle, quadrantBadge, quadrantColor, description, recommendedAction, executionScore } = executionResult;
+  const {
+    quadrant,
+    quadrantTitle,
+    quadrantBadge,
+    quadrantColor,
+    description,
+    recommendedAction,
+    executionScore,
+    answeredCount,
+    totalQuestions,
+  } = executionResult;
+  const isPartiallyAnswered = answeredCount < totalQuestions;
 
   // Determine badge background colors based on quadrant color key
   const colorStyles = {
@@ -73,6 +84,11 @@ export function MatrixQuadrant({
             </span>
             <span className="text-2xl font-black text-white">{executionScore}</span>
             <span className="text-xs text-zinc-500 font-mono"> / 100</span>
+            {isPartiallyAnswered && (
+              <span className="block text-[10px] text-amber-400/80 font-mono mt-1">
+                Based on {answeredCount}/{totalQuestions} answered — rest defaulted to a middle estimate
+              </span>
+            )}
           </div>
         </div>
 

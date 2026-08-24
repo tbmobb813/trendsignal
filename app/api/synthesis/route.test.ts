@@ -6,6 +6,14 @@ vi.mock('@/lib/rate-limiter', () => ({
   isRateLimited: vi.fn().mockResolvedValue(false),
 }));
 
+vi.mock('@/lib/supabase-server', () => ({
+  getSupabaseServerClient: vi.fn().mockReturnValue({
+    from: vi.fn().mockReturnValue({
+      insert: vi.fn().mockResolvedValue({ error: null }),
+    }),
+  }),
+}));
+
 vi.mock('@/lib/synthesis-llm', () => ({
   fetchExecutiveSynthesis: vi.fn().mockResolvedValue({
     executiveSummary: [
