@@ -8,6 +8,12 @@ import { isRateLimited } from '@/lib/rate-limiter';
 
 const CACHE_TTL_DAYS = 7;
 
+// FIX: how many historical rows to pull for cross-query generalist
+// detection and the adaptive authority-pressure calibration. Named as
+// a constant since it's now referenced in two places (cache-hit path
+// and live-fetch path) and both need to stay in sync.
+const HISTORY_LOOKBACK_LIMIT = 50;
+
 function normalizeQuery(q: string): string {
   return q.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -71,12 +77,19 @@ export async function GET(req: NextRequest) {
   }
 
   if (cached) {
-    // Fetch historical datasets (excluding current query) to enable generalist detection
+    // FIX: previously had no .order() before .limit(50), meaning which
+    // 50 historical rows came back was whatever Postgres's default scan
+    // order happened to be — not necessarily the most recent queries,
+    // despite that clearly being the intent (this feeds both cross-query
+    // generalist detection AND the adaptive authority-pressure
+    // calibration range, both of which are explicitly designed around
+    // recent history). Now explicitly ordered by fetched_at descending.
     const { data: history } = await supabase
       .from('niche_lookups')
       .select('youtube_raw')
       .neq('normalized_query', normalizedQuery)
-      .limit(50);
+      .order('fetched_at', { ascending: false })
+      .limit(HISTORY_LOOKBACK_LIMIT);
 
     const historicalDatasets = history
       ? history.map((row) => row.youtube_raw as YouTubeNicheRawData).filter(Boolean)
@@ -137,12 +150,14 @@ export async function GET(req: NextRequest) {
     console.error('Trends fetch failed (non-fatal):', err);
   }
 
-  // Fetch historical datasets for generalist detection
+  // FIX: same missing .order() issue as the cache-hit path above —
+  // applied here too for the live-fetch path.
   const { data: history } = await supabase
     .from('niche_lookups')
     .select('youtube_raw')
     .neq('normalized_query', normalizedQuery)
-    .limit(50);
+    .order('fetched_at', { ascending: false })
+    .limit(HISTORY_LOOKBACK_LIMIT);
 
   const historicalDatasets = history
     ? history.map((row) => row.youtube_raw as YouTubeNicheRawData).filter(Boolean)
