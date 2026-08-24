@@ -166,6 +166,18 @@ export function computeCompetitionScore(
   const notes: string[] = [];
 
   const baseMetrics = data.channels.map(computeChannelMetrics);
+  // NOTE (informational-only, not a scoring input): flags channels whose
+  // views-per-video is a statistical outlier relative to peers in this
+  // niche — surfaced in the returned `channels` array for UI/display
+  // purposes (e.g. distinguishing a durable performer from a one-hit
+  // viral fluke). This does NOT currently feed into authorityPressure,
+  // concentrationPressure, or any other scoring input. Wiring it in
+  // (e.g. down-weighting viral-outlier channels in the median subscriber
+  // calc, since a fluke video is weaker evidence of real competition
+  // than consistent performance) is a plausible future refinement, but
+  // deliberately left out for now — it would change scoring behavior
+  // and should be tested against real fixtures first, not folded in
+  // silently.
   const viralOutlierIds = flagViralOutliers(baseMetrics);
 
   const crossQueryAppearances = computeCrossQueryAppearances(
@@ -200,6 +212,10 @@ export function computeCompetitionScore(
     );
   }
 
+  // NOTE (informational-only, not a scoring input): median video output
+  // among specialist competitors, returned for UI/display context on
+  // "how much sustained effort competing here takes." Not currently
+  // used anywhere in the pressure/score calculation.
   const medianVideoCount = median(specialists.map((c) => c.videoCount));
 
   // --- Authority pressure ---
@@ -219,17 +235,37 @@ export function computeCompetitionScore(
   );
 
   // --- Concentration pressure ---
+  // FIX: previously computed on ALL raw video results regardless of
+  // whether the channel behind each video was "meaningful" (non-thin).
+  // Verified on real data this systematically UNDERSTATED concentration:
+  // thin/noise channels pad the denominator with channels that don't
+  // actually compete, making crowded niches look artificially more open.
+  // Confirmed delta on real fixtures: "bioluminescent terrarium care"
+  // 0.075 (unfiltered) vs 0.117 (filtered) — a consistent, one-directional
+  // bias, not noise. Now uses the same meaningful-channel basis as
+  // authority pressure and generalist share, for consistency across all
+  // three structural pressure factors.
+  const meaningfulChannelIds = new Set(meaningful.map((c) => c.channelId));
   const resultCountByChannel = new Map<string, number>();
+  let filteredVideoCount = 0;
   for (const v of data.videos) {
+    if (!meaningfulChannelIds.has(v.channelId)) continue;
     resultCountByChannel.set(v.channelId, (resultCountByChannel.get(v.channelId) ?? 0) + 1);
+    filteredVideoCount++;
   }
-  const totalResults = data.videos.length || 1;
+  const totalResults = filteredVideoCount || 1;
   let hhi = 0;
   for (const count of resultCountByChannel.values()) {
     const share = count / totalResults;
     hhi += share * share;
   }
   const concentrationPressure = Math.max(0, Math.min(1, hhi));
+
+  if (filteredVideoCount === 0 && data.videos.length > 0) {
+    notes.push(
+      'Every channel in the top search results was below the thin-channel floor — concentration pressure could not be meaningfully computed and defaults to 0. This usually means the niche is extremely nascent; check the demand floor before trusting a low score here.'
+    );
+  }
 
   // --- Generalist authority share ---
   const totalMeaningfulSubMass = meaningfulSubCounts.reduce((sum, s) => sum + s, 0);
@@ -263,7 +299,7 @@ export function computeCompetitionScore(
 
   if (monetizationRes.matchedBy === 'default') {
     notes.push(
-      `No specific monetization category matched this query — using the general-interest default (RPM ${monetizationRes.benchmark.rpmRange}). This is common for long-tail, specific niches and doesn't necessarily mean low monetization potential, just that it wasn't captured by the current keyword list.`
+      `No specific monetization category matched this query — using the general-interest default (RPM ${monetizationRes.benchmark.rpmRange}). Since this is a guess rather than a real category match, it's excluded from the score entirely (weight redistributed to the other three factors) rather than contributing as if it were verified signal.`
     );
   }
 
@@ -272,11 +308,30 @@ export function computeCompetitionScore(
   const WEIGHT_GENERALIST = 0.25;
   const WEIGHT_MONETIZATION = 0.15;
 
-  const pressure =
-    WEIGHT_AUTHORITY * authorityPressure +
-    WEIGHT_CONCENTRATION * concentrationPressure +
-    WEIGHT_GENERALIST * generalistAuthorityShare +
-    WEIGHT_MONETIZATION * monetizationPressure;
+  // FIX: previously the full 15% monetization weight applied even when
+  // getMonetizationBenchmark() fell through to the unverified default
+  // (no real category keyword matched — confirmed at 18% of real test
+  // queries, e.g. "restoring vintage mechanical calculators", "resume
+  // tips for career changers"). A guessed default was being treated as
+  // equally informative as a real category match. When the match is a
+  // default, monetization is excluded from the pressure calculation and
+  // its weight is redistributed proportionally across the other three
+  // factors, rather than diluting the score with a non-differentiating
+  // signal.
+  let pressure: number;
+  if (monetizationRes.matchedBy === 'default') {
+    const remainingWeightSum = WEIGHT_AUTHORITY + WEIGHT_CONCENTRATION + WEIGHT_GENERALIST;
+    pressure =
+      (WEIGHT_AUTHORITY / remainingWeightSum) * authorityPressure +
+      (WEIGHT_CONCENTRATION / remainingWeightSum) * concentrationPressure +
+      (WEIGHT_GENERALIST / remainingWeightSum) * generalistAuthorityShare;
+  } else {
+    pressure =
+      WEIGHT_AUTHORITY * authorityPressure +
+      WEIGHT_CONCENTRATION * concentrationPressure +
+      WEIGHT_GENERALIST * generalistAuthorityShare +
+      WEIGHT_MONETIZATION * monetizationPressure;
+  }
 
   const score = Math.round(Math.max(0, Math.min(100, (1 - pressure) * 100)));
 
@@ -289,7 +344,7 @@ export function computeCompetitionScore(
   // confirmed on "best gpu's to buy 2026" during testing, where the
   // check protected the score from being wrongly tanked.
   let finalScore = score;
-  if (trendsData && trendsData.suspectedFailure) {
+  if (trendsData && (trendsData as TrendsRawData & { suspectedFailure?: boolean }).suspectedFailure) {
     notes.push(
       'Trends data could not be confidently retrieved for this query even after retries (this looks more like a rate-limited or blocked request than genuine zero search demand) — the score reflects competition and monetization structure only and should be treated as unverified on the demand side.'
     );

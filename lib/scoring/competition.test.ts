@@ -158,7 +158,7 @@ describe('YouTube Niche Competition Scorer', () => {
     });
 
     it('does not apply demand floor penalty when trends fetch is a suspected failure', () => {
-      const suspectedFailureData: TrendsRawData = {
+      const suspectedFailureData = {
         query: 'test',
         fetchedAt: '2026-08-22T00:00:00Z',
         points: [],
@@ -167,7 +167,7 @@ describe('YouTube Niche Competition Scorer', () => {
         relatedRising: [],
         lifecycle: calculateTrendLifecycle([]),
         suspectedFailure: true,
-      };
+      } as TrendsRawData & { suspectedFailure: true };
 
       const result = computeCompetitionScore(fixtureCalculators, [], suspectedFailureData);
       const normalScore = computeCompetitionScore(fixtureCalculators, []).score;
