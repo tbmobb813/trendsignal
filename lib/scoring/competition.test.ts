@@ -7,7 +7,7 @@ import {
   computeCompetitionScore,
 } from './competition';
 import { YouTubeNicheRawData, YouTubeChannelStats } from '../youtube';
-import { TrendsRawData } from '../trends';
+import { TrendsRawData, calculateTrendLifecycle } from '../trends';
 
 const FIXTURE_DIR = path.join(__dirname, '..', '..', 'test-data');
 
@@ -135,6 +135,7 @@ describe('YouTube Niche Competition Scorer', () => {
         recentDataCoverage: 0.9, // 90% coverage
         relatedTop: [],
         relatedRising: [],
+        lifecycle: calculateTrendLifecycle([]),
       };
 
       const highTrendsResult = computeCompetitionScore(fixtureCalculators, [], highTrendsData);
@@ -148,6 +149,7 @@ describe('YouTube Niche Competition Scorer', () => {
         recentDataCoverage: 0.1, // 10% coverage (below 20% floor)
         relatedTop: [],
         relatedRising: [],
+        lifecycle: calculateTrendLifecycle([]),
       };
 
       const lowTrendsResult = computeCompetitionScore(fixtureCalculators, [], lowTrendsData);

@@ -21,6 +21,7 @@ const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 export interface YouTubeVideoResult {
   videoId: string;
   title: string;
+  description: string;
   channelId: string;
   channelTitle: string;
   publishedAt: string;
@@ -92,6 +93,7 @@ async function searchVideos(
     id: { videoId: string };
     snippet: {
       title: string;
+      description: string;
       channelId: string;
       channelTitle: string;
       publishedAt: string;
@@ -101,6 +103,7 @@ async function searchVideos(
   return (data.items ?? []).map((item: YouTubeSearchItem) => ({
     videoId: item.id.videoId,
     title: item.snippet.title,
+    description: item.snippet.description || '',
     channelId: item.snippet.channelId,
     channelTitle: item.snippet.channelTitle,
     publishedAt: item.snippet.publishedAt,

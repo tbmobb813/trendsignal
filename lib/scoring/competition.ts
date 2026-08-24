@@ -5,23 +5,15 @@ import { getMonetizationBenchmark } from './monetization';
 
 /**
  * Thresholds and multipliers below are FIRST-PASS heuristics, not tuned
- * constants. They're based on patterns visible across five real test
- * queries (budget meal prep, budget meal prep for one, meal prep for
- * night shift nurses, how to make money on youtube, morning routine).
- * Expect to revisit these once you've run this against more niches —
- * treat every number here as a labeled guess, not a fact.
+ * constants. They're based on patterns visible across real test queries.
+ * Treat every number here as a labeled guess, not a fact.
  */
 const THIN_SUBSCRIBER_FLOOR = 1000;
 const THIN_VIDEO_COUNT_FLOOR = 10;
-const VIRAL_OUTLIER_MULTIPLIER = 5; // flag if viewsPerVideo > 5x the niche's median
-const GENERALIST_APPEARANCE_THRESHOLD = 2; // appears in this query + at least 1 other unrelated query
-const GENERALIST_SUBSCRIBER_FALLBACK = 500_000; // cold-start heuristic when no cross-query history exists yet
+const VIRAL_OUTLIER_MULTIPLIER = 5;
+const GENERALIST_APPEARANCE_THRESHOLD = 2;
+const GENERALIST_SUBSCRIBER_FALLBACK = 500_000;
 
-/**
- * Compute derived metrics for a single channel. Pure — no history,
- * no outlier detection relative to peers (that needs the full set,
- * see computeCompetitionScore). This just does the per-channel math.
- */
 export function computeChannelMetrics(
   channel: YouTubeChannelStats
 ): Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'> {
@@ -55,10 +47,6 @@ function median(nums: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-/**
- * Flags channels whose views-per-video is a statistical outlier relative
- * to OTHER channels in the same niche result set.
- */
 function flagViralOutliers(
   channels: Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'>[]
 ): Set<string> {
@@ -76,9 +64,6 @@ function flagViralOutliers(
   return outliers;
 }
 
-/**
- * Counts how many distinct past query datasets each channel has appeared in.
- */
 export function computeCrossQueryAppearances(
   targetChannelIds: string[],
   historicalDatasets: YouTubeNicheRawData[]
@@ -98,9 +83,6 @@ export function computeCrossQueryAppearances(
   return counts;
 }
 
-/**
- * Decides which channels count as "generalist-suspected" for this query.
- */
 function flagGeneralists(
   channels: Omit<ChannelMetrics, 'isViralOutlier' | 'isGeneralistSuspected' | 'crossQueryAppearances'>[],
   crossQueryAppearances: Map<string, number>
@@ -120,10 +102,62 @@ function flagGeneralists(
   return flagged;
 }
 
+interface CalibrationRange {
+  minLogSubs: number;
+  maxLogSubs: number;
+}
+
 /**
- * Main entry point: given raw niche data (and optionally historical datasets and Trends data),
- * compute the full opportunity & competition picture.
+ * STATUS: untested. This adaptive calibration (recalibrating authority
+ * pressure bounds against the mean±2σ of accumulated query history) is
+ * a legitimate idea but was never validated the way the rest of this
+ * formula was — we don't know whether it improves accuracy or just
+ * makes scores drift and become incomparable across time as more
+ * history accumulates. Flagging, not fixing — needs real testing
+ * before being trusted the way the rest of this file now is.
  */
+function calculateCalibrationRange(historicalDatasets: YouTubeNicheRawData[]): CalibrationRange {
+  const DEFAULT_MIN = 3.0; // 1,000 subscribers
+  const DEFAULT_MAX = 7.7; // 50,000,000 subscribers
+
+  if (!historicalDatasets || historicalDatasets.length < 5) {
+    return { minLogSubs: DEFAULT_MIN, maxLogSubs: DEFAULT_MAX };
+  }
+
+  const historicalMedianLogs: number[] = [];
+
+  for (const dataset of historicalDatasets) {
+    const meaningful = (dataset.channels || []).filter((c) => {
+      const isThin = c.videoCount < 10 || (c.subscriberCount !== null && c.subscriberCount < 1000);
+      return !isThin;
+    });
+
+    const subCounts = meaningful
+      .map((c) => c.subscriberCount)
+      .filter((s): s is number => s !== null && s > 0);
+
+    const medianSubs = median(subCounts);
+    if (medianSubs > 0) {
+      historicalMedianLogs.push(Math.log10(medianSubs));
+    }
+  }
+
+  if (historicalMedianLogs.length < 5) {
+    return { minLogSubs: DEFAULT_MIN, maxLogSubs: DEFAULT_MAX };
+  }
+
+  const sum = historicalMedianLogs.reduce((acc, val) => acc + val, 0);
+  const avg = sum / historicalMedianLogs.length;
+
+  const sqDiffSum = historicalMedianLogs.reduce((acc, val) => acc + Math.pow(val - avg, 2), 0);
+  const stdDev = Math.sqrt(sqDiffSum / historicalMedianLogs.length);
+
+  const minLogSubs = Math.max(DEFAULT_MIN, avg - 2 * stdDev);
+  const maxLogSubs = Math.min(8.0, avg + 2 * stdDev);
+
+  return { minLogSubs, maxLogSubs };
+}
+
 export function computeCompetitionScore(
   data: YouTubeNicheRawData,
   historicalDatasets: YouTubeNicheRawData[] = [],
@@ -174,7 +208,15 @@ export function computeCompetitionScore(
     .filter((s): s is number => s !== null && s > 0);
   const medianSubs = median(meaningfulSubCounts);
   const medianLogSubs = medianSubs > 0 ? Math.log10(medianSubs) : 3;
-  const authorityPressure = Math.max(0, Math.min(1, (medianLogSubs - 3) / (7.7 - 3)));
+  const calibrationRange = calculateCalibrationRange(historicalDatasets);
+  const authorityPressure = Math.max(
+    0,
+    Math.min(
+      1,
+      (medianLogSubs - calibrationRange.minLogSubs) /
+        (calibrationRange.maxLogSubs - calibrationRange.minLogSubs || 1)
+    )
+  );
 
   // --- Concentration pressure ---
   const resultCountByChannel = new Map<string, number>();
@@ -210,9 +252,20 @@ export function computeCompetitionScore(
     );
   }
 
-  // --- Monetization pressure (Inverse of Monetization Benchmark Score) ---
+  // --- Monetization pressure ---
+  // See lib/scoring/monetization.ts and data/cpm-benchmarks.json for
+  // the sourcing caveat: these are unsourced estimates, and matching
+  // now uses word-boundary regex (fixed from plain substring matching,
+  // which had a confirmed bug: "how to make money on youtube" was
+  // matching the finance category via the substring "money").
   const monetizationRes = getMonetizationBenchmark(data.query);
   const monetizationPressure = 1 - monetizationRes.benchmark.monetizationScore / 100;
+
+  if (monetizationRes.matchedBy === 'default') {
+    notes.push(
+      `No specific monetization category matched this query — using the general-interest default (RPM ${monetizationRes.benchmark.rpmRange}). This is common for long-tail, specific niches and doesn't necessarily mean low monetization potential, just that it wasn't captured by the current keyword list.`
+    );
+  }
 
   const WEIGHT_AUTHORITY = 0.35;
   const WEIGHT_CONCENTRATION = 0.25;
@@ -228,9 +281,20 @@ export function computeCompetitionScore(
   const score = Math.round(Math.max(0, Math.min(100, (1 - pressure) * 100)));
 
   // ---- Demand floor multiplier ----
+  // RESTORED: this block previously lost the suspectedFailure check
+  // during later edits. Without it, any query where Google Trends
+  // silently rate-limited us (returning technically-valid but
+  // functionally-empty data) gets its score wrongly crushed as if it
+  // were a confirmed zero-demand niche — this was the exact bug
+  // confirmed on "best gpu's to buy 2026" during testing, where the
+  // check protected the score from being wrongly tanked.
   let finalScore = score;
-  if (trendsData) {
-    const coverage = trendsData.recentDataCoverage; // 0-1
+  if (trendsData && trendsData.suspectedFailure) {
+    notes.push(
+      'Trends data could not be confidently retrieved for this query even after retries (this looks more like a rate-limited or blocked request than genuine zero search demand) — the score reflects competition and monetization structure only and should be treated as unverified on the demand side.'
+    );
+  } else if (trendsData) {
+    const coverage = trendsData.recentDataCoverage;
     if (coverage < 0.2) {
       notes.push(
         `Google Trends shows almost no search interest for this query (${Math.round(coverage * 100)}% of recent months had any signal at all) — the competition score above may be misleadingly high, since low competition here likely reflects low demand, not open opportunity.`
@@ -244,7 +308,7 @@ export function computeCompetitionScore(
     }
   } else {
     notes.push(
-      'No Trends data available for this query — the score below reflects competition structure only and has not been checked against actual search demand.'
+      'No Trends data available for this query — the score below reflects competition and monetization structure only and has not been checked against actual search demand.'
     );
   }
 

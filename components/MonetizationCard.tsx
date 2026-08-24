@@ -21,7 +21,7 @@ export function MonetizationCard({ query }: MonetizationCardProps) {
       <div>
         <div className="flex justify-between items-start gap-2 mb-2">
           <span className="text-zinc-500 text-[10px] font-bold font-mono tracking-wider uppercase block">
-            Monetization & RPM Potential
+            Monetization & RPM Potential <span className="text-amber-500/80 font-normal">(&bull; Keyword Estimate)</span>
           </span>
           <span className={`px-2 py-0.5 rounded-md border text-[10px] font-mono font-bold ${tierBadgeStyles}`}>
             {benchmark.cpmTier} CPM

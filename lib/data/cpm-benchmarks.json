@@ -6,7 +6,7 @@
     "rpmRange": "$18.00 – $45.00",
     "monetizationScore": 100,
     "affiliatePotential": "High (Stock brokerages, crypto exchanges, credit card referrals, financial software).",
-    "keywords": ["finance", "investing", "money", "crypto", "bitcoin", "real estate", "mortgage", "tax", "saas", "trading", "stocks", "passive income", "credit", "wealth"]
+    "keywords": ["finance", "investing", "invest", "crypto", "bitcoin", "real estate", "mortgage", "tax", "trading", "stocks", "passive income", "credit", "wealth"]
   },
   {
     "id": "business",
@@ -15,7 +15,7 @@
     "rpmRange": "$12.00 – $28.00",
     "monetizationScore": 90,
     "affiliatePotential": "High (B2B SaaS, CRM tools, email software, website hosts, courses).",
-    "keywords": ["business", "marketing", "ecommerce", "dropshipping", "agency", "freelance", "productivity", "entrepreneur", "sales", "b2b", "startup"]
+    "keywords": ["business", "marketing", "ecommerce", "dropshipping", "agency", "freelance", "productivity", "entrepreneur", "sales", "b2b", "startup", "saas"]
   },
   {
     "id": "tech",
@@ -24,7 +24,7 @@
     "rpmRange": "$10.00 – $22.00",
     "monetizationScore": 85,
     "affiliatePotential": "High (VPNs, cloud hosting, dev tools, laptops, electronics, software SaaS).",
-    "keywords": ["tech", "coding", "programming", "software", "developer", "ai", "python", "javascript", "laptop", "gadget", "cybersecurity", "review", "hardware"]
+    "keywords": ["tech", "coding", "programming", "software", "developer", "python", "javascript", "laptop", "gadget", "cybersecurity", "hardware", "gpu", "graphics card", "pc", "processor", "cpu", "motherboard", "3d printer", "3d printing", "keyboard", "mechanical keyboard", "open source", "llm", "local ai", "machine learning"]
   },
   {
     "id": "health",
@@ -42,7 +42,7 @@
     "rpmRange": "$5.00 – $12.00",
     "monetizationScore": 65,
     "affiliatePotential": "Moderate-High (Power tools, craft supplies, woodworking blueprints, Etsy sales).",
-    "keywords": ["woodworking", "pottery", "diy", "renovation", "gardening", "crafts", "restoration", "tools", "sharpening", "carpentry", "sewing", "mechanical"]
+    "keywords": ["woodworking", "pottery", "diy", "renovation", "gardening", "crafts", "restoration", "sharpening", "carpentry", "sewing", "chisel", "lathe", "wood turning", "woodturning", "soldering", "ceramics", "terrarium", "calculator restoration"]
   },
   {
     "id": "cooking_food",
@@ -51,7 +51,7 @@
     "rpmRange": "$4.00 – $9.50",
     "monetizationScore": 60,
     "affiliatePotential": "Moderate (Kitchenware links, meal kit sponsorships, cookbooks).",
-    "keywords": ["cooking", "recipe", "food", "baking", "meal prep", "chef", "kitchen", "bbq", "grilling", "culinary"]
+    "keywords": ["cooking", "recipe", "food", "baking", "meal prep", "chef", "kitchen", "bbq", "grilling", "culinary", "espresso", "coffee", "cast iron"]
   },
   {
     "id": "gaming",
@@ -69,6 +69,6 @@
     "rpmRange": "$1.50 – $4.00",
     "monetizationScore": 30,
     "affiliatePotential": "Low (Merchandise sales, Patreon, brand sponsorships).",
-    "keywords": ["vlog", "prank", "challenge", "comedy", "reaction", "shorts", "storytime", "daily life"]
+    "keywords": ["vlog", "prank", "challenge", "comedy", "reaction", "shorts", "storytime", "daily life", "morning routine", "productivity tips"]
   }
 ]
